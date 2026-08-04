@@ -1,2 +1,83 @@
 # svg-canvas
-SVG Canvas for Markdown
+
+A tiny, zero-dependency SVG editor that runs in the browser. Draw primitives, arrange them, edit properties, and copy or download the clean SVG source — no build step, no framework, no server-side anything.
+
+## Features
+
+- **Shapes** — rectangle, circle, ellipse, line, polyline, and text
+- **Direct manipulation** — move, resize (8 handles), rotate
+- **Selection** — click, shift-click, and drag-marquee, with group descent on double-click
+- **Smart alignment guides** — Figma/PowerPoint-style edge and center snapping to nearby objects and the canvas
+- **Alignment & distribution** — 6 align ops plus horizontal/vertical distribute
+- **Grouping** — `Ctrl+G` / `Ctrl+Shift+G`
+- **Layers panel** — reorder via right-click (bring to front / send to back / forward / backward), collapse/expand groups
+- **Labels on shapes** — double-click any shape to type a centered label; labels travel with the shape on export
+- **Properties panel** — fill, stroke, stroke width, opacity, font family/size/color
+- **Live SVG source** — always-visible, always-current source pane with Copy / Download / tight-viewBox toggle
+- **Import** — paste SVG markup; supports Adobe Illustrator exports (class-based `<style>` inlining, `matrix()` transforms that decompose to translate + rotation)
+- **Undo/redo** — one entry per gesture, up to 200 steps
+
+## Getting started
+
+No build tools are required. Any static file server works:
+
+```bash
+python -m http.server 8765
+```
+
+Then open [http://localhost:8765/](http://localhost:8765/).
+
+Requires a modern browser (ES modules, `structuredClone`, `crypto.randomUUID`).
+
+## Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| `V` | Select tool |
+| `R` `C` `E` `L` `P` `T` | Rect / Circle / Ellipse / Line / Polyline / Text tool |
+| `Esc` | Cancel current tool → Select; also cancels an in-progress polyline |
+| `F2` | Rename label on selected shape |
+| `Delete` / `Backspace` | Delete selection |
+| `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) | Undo / Redo |
+| `Ctrl+A` | Select all top-level nodes |
+| `Ctrl+D` | Duplicate selection |
+| `Ctrl+C` / `Ctrl+V` | Copy / Paste |
+| `Ctrl+G` / `Ctrl+Shift+G` | Group / Ungroup |
+| Arrow keys | Nudge selection 1px (hold `Shift` for 10px) |
+
+While drawing: hold `Shift` to constrain rect/ellipse to a square/circle, or a line to 45° increments. While moving: hold `Alt` to bypass snapping.
+
+## Import support
+
+The importer is deliberately strict — anything it can't represent throws a specific error instead of silently dropping data.
+
+**Supported:** `rect`, `circle`, `ellipse`, `line`, `polyline`, `text`, `path`, `g`, `title`/`desc`/`metadata` (ignored), `<style>` and `<defs>` containing only styles, `transform` composed of `translate()`, `rotate()`, and rigid `matrix()`.
+
+**Rejected with a clear message:** gradients, patterns, filters, clip paths, masks, `<use>`, `<image>`, `<symbol>`, `<marker>`, `url(#...)` paint references, and any transform that includes scale or shear.
+
+Illustrator's default "SVG 1.1" export (with `.st0 { fill: #... }` class styling) works out of the box.
+
+## Project layout
+
+```
+index.html          entry point; wires up the toolbar, canvas, panels
+styles.css          all styling (dark UI, light canvas)
+js/
+  main.js           bootstrap — mount modules and wire the pub/sub loop
+  state.js          document tree + selection + observer subscribe/notify
+  history.js        snapshot-based undo/redo (200-entry ring)
+  render.js         SVG DOM rendering + selection chrome + coord conversion
+  tools.js          pointer/keyboard state machine for every tool + gestures
+  ui.js             toolbar, property panel, keyboard shortcuts, clipboard
+  export.js         hand-written SVG serializer + live source panel + copy/download
+  import.js         strict SVG parser (with Illustrator class inlining)
+  layers.js         Illustrator-style layers panel
+  align.js          alignment + distribution ops
+  guides.js         smart snapping guides drawn during drag
+```
+
+Architecture note: `state.js` holds the authoritative doc tree; every other module reads from it and re-renders on `subscribe()`. All mutations go through `mutate(fn)`, which deep-clones the root, mutates a draft, then swaps it and notifies subscribers.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
