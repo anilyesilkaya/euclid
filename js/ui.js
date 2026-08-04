@@ -1,0 +1,510 @@
+// Palette buttons, property panel, keyboard shortcuts, grouping, and clipboard.
+
+import {
+  getDoc, getSelection, setSelection, clearSelection,
+  mutate, newId, findNode, findParent, findPath, walk, removeByIds, emptyTransform,
+} from "./state.js";
+import * as history from "./history.js";
+import { setTool, getTool, cancelPolyline, isTextEditing, openLabelEditor } from "./tools.js";
+import { align } from "./align.js";
+
+const TOOL_KEYS = { v: "select", r: "rect", c: "circle", e: "ellipse", l: "line", p: "polyline", t: "text" };
+
+let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity;
+let pText, pFontSize, pFontFamily, pTextColor;
+let clipboard = null;
+
+export function mount(root) {
+  wireToolbar(root);
+  wireProperties(root);
+  wireKeyboard();
+  document.addEventListener("tool-changed", (e) => reflectToolInUI(e.detail));
+  reflectToolInUI(getTool());
+}
+
+function wireToolbar(root) {
+  const btns = root.querySelectorAll("#toolbar .tool");
+  for (const b of btns) {
+    b.addEventListener("click", () => setTool(b.dataset.tool));
+  }
+}
+
+function reflectToolInUI(tool) {
+  document.querySelectorAll("#toolbar .tool").forEach(b => {
+    b.classList.toggle("active", b.dataset.tool === tool);
+  });
+}
+
+function wireProperties(root) {
+  propsEmpty = root.querySelector("#props-empty");
+  propsForm = root.querySelector("#props-form");
+  pFill = root.querySelector("#p-fill");
+  pFillNone = root.querySelector("#p-fill-none");
+  pStroke = root.querySelector("#p-stroke");
+  pStrokeNone = root.querySelector("#p-stroke-none");
+  pStrokeWidth = root.querySelector("#p-stroke-width");
+  pOpacity = root.querySelector("#p-opacity");
+  pText = root.querySelector("#p-text");
+  pFontSize = root.querySelector("#p-font-size");
+  pFontFamily = root.querySelector("#p-font-family");
+  pTextColor = root.querySelector("#p-text-color");
+
+  pFill.addEventListener("input", () => applyToSelection("fill", pFill.value));
+  pFill.addEventListener("change", () => historyCommitAfter(() => applyToSelection("fill", pFill.value)));
+  pFillNone.addEventListener("change", () => historyRecord(() => applyToSelection("fill", pFillNone.checked ? "none" : pFill.value)));
+  pStroke.addEventListener("input", () => applyToSelection("stroke", pStroke.value));
+  pStroke.addEventListener("change", () => historyCommitAfter(() => applyToSelection("stroke", pStroke.value)));
+  pStrokeNone.addEventListener("change", () => historyRecord(() => applyToSelection("stroke", pStrokeNone.checked ? "none" : pStroke.value)));
+  pStrokeWidth.addEventListener("input", () => applyToSelection("stroke-width", Number(pStrokeWidth.value)));
+  pStrokeWidth.addEventListener("change", () => historyCommitAfter(() => applyToSelection("stroke-width", Number(pStrokeWidth.value))));
+  pOpacity.addEventListener("input", () => applyToSelection("opacity", Number(pOpacity.value)));
+  pOpacity.addEventListener("change", () => historyCommitAfter(() => applyToSelection("opacity", Number(pOpacity.value))));
+
+  // On mousedown of a slider/color, open a transaction so the drag becomes one history entry.
+  for (const input of [pFill, pStroke, pStrokeWidth, pOpacity, pTextColor]) {
+    input.addEventListener("pointerdown", () => history.beginTransaction());
+  }
+
+  // Text content: for text nodes writes .text; for other nodes writes .label.
+  pText.addEventListener("input", () => applyTextContent(pText.value));
+  pText.addEventListener("change", () => historyCommitAfter(() => applyTextContent(pText.value)));
+  pText.addEventListener("pointerdown", () => history.beginTransaction());
+
+  pFontSize.addEventListener("input", () => applyFontSize(Number(pFontSize.value)));
+  pFontSize.addEventListener("change", () => historyCommitAfter(() => applyFontSize(Number(pFontSize.value))));
+  pFontSize.addEventListener("pointerdown", () => history.beginTransaction());
+
+  pFontFamily.addEventListener("change", () => historyRecord(() => applyFontFamily(pFontFamily.value)));
+
+  pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
+  pTextColor.addEventListener("change", () => historyCommitAfter(() => applyTextColor(pTextColor.value)));
+
+  // Align buttons.
+  const alignGrid = root.querySelector("#align-grid");
+  alignGrid.addEventListener("click", (e) => {
+    const btn = e.target.closest(".align-btn");
+    if (!btn || btn.disabled) return;
+    align(btn.dataset.align);
+  });
+}
+
+function applyTextContent(value) {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  mutate((root) => {
+    for (const id of ids) {
+      const n = findNode(root, id);
+      if (!n) continue;
+      if (n.type === "text") {
+        n.text = value;
+      } else {
+        if (value && value.trim()) n.label = value;
+        else delete n.label;
+      }
+    }
+  });
+}
+
+function applyFontSize(value) {
+  if (!(value > 0)) return;
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  mutate((root) => {
+    for (const id of ids) {
+      const n = findNode(root, id);
+      if (!n) continue;
+      if (n.type === "text") {
+        n.attrs["font-size"] = value;
+      } else if (n.label) {
+        n.labelStyle = { ...(n.labelStyle || {}), "font-size": value };
+      }
+    }
+  });
+}
+
+function applyFontFamily(value) {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  mutate((root) => {
+    for (const id of ids) {
+      const n = findNode(root, id);
+      if (!n) continue;
+      if (n.type === "text") {
+        n.attrs["font-family"] = value;
+      } else if (n.label) {
+        n.labelStyle = { ...(n.labelStyle || {}), "font-family": value };
+      }
+    }
+  });
+}
+
+function applyTextColor(value) {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  mutate((root) => {
+    for (const id of ids) {
+      const n = findNode(root, id);
+      if (!n) continue;
+      if (n.type === "text") {
+        n.attrs.fill = value;
+      } else if (n.label) {
+        n.labelStyle = { ...(n.labelStyle || {}), fill: value };
+      }
+    }
+  });
+}
+
+let commitScheduled = false;
+function historyCommitAfter(fn) {
+  fn();
+  history.commit("prop edit");
+}
+function historyRecord(fn) {
+  history.beginTransaction();
+  fn();
+  history.commit("prop edit");
+}
+
+function applyToSelection(key, value) {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  mutate((root) => {
+    for (const id of ids) {
+      const n = findNode(root, id);
+      if (!n) continue;
+      // For groups, apply presentation to descendant shapes (skip nested-group opacity for opacity which is already valid on <g>).
+      if (n.type === "group" && key !== "opacity") {
+        walk(n, (node) => {
+          if (node.type !== "group") node.attrs[key] = value;
+        });
+      } else {
+        n.attrs[key] = value;
+      }
+    }
+  });
+}
+
+export function refreshPropertyPanel() {
+  const ids = [...getSelection()];
+  if (ids.length === 0) {
+    propsEmpty.hidden = false;
+    propsForm.hidden = true;
+    return;
+  }
+  propsEmpty.hidden = true;
+  propsForm.hidden = false;
+
+  // Distribute needs 3+ items; align always works (single-item aligns to canvas).
+  const canDistribute = ids.length >= 3;
+  document.querySelectorAll('#align-grid .align-btn[data-align^="dist-"]').forEach(b => {
+    b.disabled = !canDistribute;
+  });
+
+  // Read from the first selected shape (or first descendant shape of a selected group).
+  const doc = getDoc();
+  let sample = null;
+  for (const id of ids) {
+    const n = findNode(doc, id);
+    if (!n) continue;
+    sample = firstShape(n);
+    if (sample) break;
+  }
+  if (!sample) return;
+
+  const fill = sample.attrs.fill ?? "#000000";
+  const stroke = sample.attrs.stroke ?? "#000000";
+  const sw = sample.attrs["stroke-width"] ?? 1;
+  const op = sample.attrs.opacity ?? 1;
+
+  pFillNone.checked = (fill === "none");
+  pFill.value = normalizeColor(fill, "#88ccee");
+  pStrokeNone.checked = (stroke === "none");
+  pStroke.value = normalizeColor(stroke, "#222222");
+  pStrokeWidth.value = sw;
+  pOpacity.value = op;
+
+  // Text fields — read from the first selected node.
+  const firstId = [...getSelection()][0];
+  const firstNode = firstId ? findNode(doc, firstId) : null;
+  if (!firstNode) return;
+  if (firstNode.type === "text") {
+    pText.value = firstNode.text ?? "";
+    pFontSize.value = firstNode.attrs["font-size"] ?? 20;
+    pFontFamily.value = firstNode.attrs["font-family"] ?? "sans-serif";
+    pTextColor.value = normalizeColor(firstNode.attrs.fill, "#000000");
+  } else {
+    pText.value = firstNode.label ?? "";
+    const ls = firstNode.labelStyle || {};
+    pFontSize.value = ls["font-size"] ?? 16;
+    pFontFamily.value = ls["font-family"] ?? "sans-serif";
+    pTextColor.value = normalizeColor(ls.fill, "#000000");
+  }
+}
+
+function firstShape(node) {
+  if (node.type !== "group") return node;
+  if (!node.children) return null;
+  for (const c of node.children) {
+    const s = firstShape(c);
+    if (s) return s;
+  }
+  return null;
+}
+
+function normalizeColor(v, fallback) {
+  if (typeof v !== "string") return fallback;
+  if (v === "none") return fallback;
+  if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(v)) {
+    // #abc -> #aabbcc
+    return "#" + v.slice(1).split("").map(c => c + c).join("").toLowerCase();
+  }
+  return fallback;
+}
+
+// --- Keyboard ---
+
+function wireKeyboard() {
+  window.addEventListener("keydown", (e) => {
+    if (isEditableTarget(e.target)) return;
+    if (isTextEditing()) return;
+
+    const mod = e.ctrlKey || e.metaKey;
+
+    // Tool shortcuts (no modifier).
+    if (!mod && !e.altKey) {
+      const k = e.key.toLowerCase();
+      if (TOOL_KEYS[k]) { setTool(TOOL_KEYS[k]); e.preventDefault(); return; }
+    }
+
+    if (e.key === "Escape") {
+      cancelPolyline();
+      setTool("select");
+      clearSelection();
+      e.preventDefault(); return;
+    }
+
+    if (e.key === "F2") {
+      const ids = [...getSelection()];
+      if (ids.length === 1) {
+        const n = findNode(getDoc(), ids[0]);
+        if (n) openLabelEditor(n);
+      }
+      e.preventDefault(); return;
+    }
+
+    if (e.key === "Delete" || e.key === "Backspace") {
+      deleteSelection();
+      e.preventDefault(); return;
+    }
+
+    if (mod && e.key.toLowerCase() === "z" && !e.shiftKey) {
+      history.undo(); e.preventDefault(); return;
+    }
+    if (mod && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) {
+      history.redo(); e.preventDefault(); return;
+    }
+    if (mod && e.key.toLowerCase() === "a") {
+      selectAll(); e.preventDefault(); return;
+    }
+    if (mod && e.key.toLowerCase() === "d") {
+      duplicateSelection(); e.preventDefault(); return;
+    }
+    if (mod && e.key.toLowerCase() === "c") {
+      copySelection(); e.preventDefault(); return;
+    }
+    if (mod && e.key.toLowerCase() === "v") {
+      pasteClipboard(); e.preventDefault(); return;
+    }
+    if (mod && e.key.toLowerCase() === "g" && !e.shiftKey) {
+      groupSelection(); e.preventDefault(); return;
+    }
+    if (mod && e.key.toLowerCase() === "g" && e.shiftKey) {
+      ungroupSelection(); e.preventDefault(); return;
+    }
+
+    // Arrow nudge.
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+      const step = e.shiftKey ? 10 : 1;
+      const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+      const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+      nudge(dx, dy);
+      e.preventDefault(); return;
+    }
+  });
+}
+
+function isEditableTarget(el) {
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (el.isContentEditable) return true;
+  return false;
+}
+
+// --- Commands ---
+
+function deleteSelection() {
+  const ids = new Set(getSelection());
+  if (ids.size === 0) return;
+  history.record(() => {
+    mutate((root) => { removeByIds(root, ids); });
+  });
+  clearSelection();
+}
+
+function selectAll() {
+  const doc = getDoc();
+  setSelection(doc.children.map(c => c.id));
+}
+
+function duplicateSelection() {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  const newIds = [];
+  history.record(() => {
+    mutate((root) => {
+      // Duplicate each top-level selected node. For robustness we work on top ancestors.
+      const seen = new Set();
+      const topIds = new Set();
+      for (const id of ids) {
+        const path = findPath(root, id);
+        if (!path || path.length === 0) continue;
+        topIds.add(path[0].id);
+      }
+      for (const id of topIds) {
+        const node = findNode(root, id);
+        if (!node) continue;
+        const copy = deepReId(node);
+        // Nudge duplicates so they aren't perfectly stacked.
+        if (!copy.transform) copy.transform = emptyTransform();
+        copy.transform.tx = (copy.transform.tx || 0) + 10;
+        copy.transform.ty = (copy.transform.ty || 0) + 10;
+        root.children.push(copy);
+        newIds.push(copy.id);
+      }
+    });
+  });
+  setSelection(newIds);
+}
+
+function deepReId(node) {
+  const copy = structuredClone(node);
+  walk(copy, (n) => { n.id = newId(n.type === "group" ? "g" : "n"); });
+  return copy;
+}
+
+function copySelection() {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  const doc = getDoc();
+  const nodes = [];
+  const topIds = new Set();
+  for (const id of ids) {
+    const path = findPath(doc, id);
+    if (!path || path.length === 0) continue;
+    topIds.add(path[0].id);
+  }
+  for (const id of topIds) {
+    const n = findNode(doc, id);
+    if (n) nodes.push(structuredClone(n));
+  }
+  clipboard = nodes;
+}
+
+function pasteClipboard() {
+  if (!clipboard || clipboard.length === 0) return;
+  const newIds = [];
+  history.record(() => {
+    mutate((root) => {
+      for (const src of clipboard) {
+        const copy = deepReId(src);
+        if (!copy.transform) copy.transform = emptyTransform();
+        copy.transform.tx = (copy.transform.tx || 0) + 10;
+        copy.transform.ty = (copy.transform.ty || 0) + 10;
+        root.children.push(copy);
+        newIds.push(copy.id);
+      }
+    });
+  });
+  setSelection(newIds);
+}
+
+function nudge(dx, dy) {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  history.record(() => {
+    mutate((root) => {
+      for (const id of ids) {
+        const path = findPath(root, id);
+        if (!path || path.length === 0) continue;
+        const top = path[0];
+        if (!top.transform) top.transform = emptyTransform();
+        top.transform.tx = (top.transform.tx || 0) + dx;
+        top.transform.ty = (top.transform.ty || 0) + dy;
+      }
+    });
+  });
+}
+
+function groupSelection() {
+  const ids = [...getSelection()];
+  if (ids.length < 2) return;
+  const gId = newId("g");
+  history.record(() => {
+    mutate((root) => {
+      // Collect the top-level nodes to group (in current paint order).
+      const topIds = new Set();
+      for (const id of ids) {
+        const path = findPath(root, id);
+        if (!path || path.length === 0) continue;
+        topIds.add(path[0].id);
+      }
+      const orderedTops = root.children.filter(c => topIds.has(c.id));
+      if (orderedTops.length < 2) return;
+      root.children = root.children.filter(c => !topIds.has(c.id));
+      const group = {
+        id: gId,
+        type: "group",
+        attrs: {},
+        transform: emptyTransform(),
+        children: orderedTops,
+      };
+      // Insert at the position of the topmost (last painted) member.
+      const insertAt = root.children.length; // append; groups always land on top
+      root.children.splice(insertAt, 0, group);
+    });
+  });
+  setSelection([gId]);
+}
+
+function ungroupSelection() {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  const releasedIds = [];
+  history.record(() => {
+    mutate((root) => {
+      for (const id of ids) {
+        const node = findNode(root, id);
+        if (!node || node.type !== "group") continue;
+        const parent = findParent(root, id);
+        if (!parent) continue;
+        const idx = parent.children.indexOf(node);
+        if (idx < 0) continue;
+        // Bake group's transform onto each child by composing with the child's transform (translate + rotate).
+        // Simple case: only translate — add group.tx to each child.tx. Rotation composition of two rotates
+        // is non-trivial; for v1 we bake translation only and drop group rotation.
+        const gtx = node.transform?.tx || 0;
+        const gty = node.transform?.ty || 0;
+        for (const c of node.children) {
+          if (!c.transform) c.transform = emptyTransform();
+          c.transform.tx = (c.transform.tx || 0) + gtx;
+          c.transform.ty = (c.transform.ty || 0) + gty;
+          releasedIds.push(c.id);
+        }
+        parent.children.splice(idx, 1, ...node.children);
+      }
+    });
+  });
+  setSelection(releasedIds);
+}
