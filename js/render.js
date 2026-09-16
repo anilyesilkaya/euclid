@@ -59,6 +59,15 @@ function nodeToElement(node) {
     const wrap = document.createElementNS(SVG_NS, "g");
     wrap.setAttribute("data-id", node.id);
     wrap.setAttribute("data-wrapper", "label");
+    // Move the node's transform onto the wrapper so the shape AND its label
+    // translate/rotate together. The label is positioned in the shape's *local*
+    // (pre-transform) coords, so the transform has to live on their common parent
+    // — and must NOT also stay on the inner shape, or it'd be applied twice.
+    const tstr = transformToString(node.transform);
+    if (tstr) {
+      wrap.setAttribute("transform", tstr);
+      el.removeAttribute("transform");
+    }
     // The shape carries its own data-id; that's fine — hit-test walks up until it finds one.
     wrap.appendChild(el);
     wrap.appendChild(labelElement(node, localBBoxOfShapeNode(node)));
