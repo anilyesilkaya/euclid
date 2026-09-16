@@ -6,7 +6,7 @@ import {
   mutate, newId, emptyTransform, findNode, findPath, topAncestor,
 } from "./state.js";
 import * as history from "./history.js";
-import { toCanvasPoint, getTransientLayer, getDocLayer } from "./render.js";
+import { toCanvasPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix } from "./render.js";
 import * as guides from "./guides.js";
 
 const CANVAS_BBOX = { x: 0, y: 0, width: 1000, height: 700 };
@@ -349,31 +349,6 @@ function finishMarquee(g, additive) {
   }
 }
 
-function elementBBoxInCanvas(el) {
-  try {
-    const b = el.getBBox();
-    // getCTM() already maps local coords to the ancestor <svg>'s viewBox space.
-    const ctmEl = el.getCTM();
-    if (!ctmEl) return null;
-    const svg = canvasSvg;
-    const corners = [
-      [b.x, b.y], [b.x + b.width, b.y],
-      [b.x, b.y + b.height], [b.x + b.width, b.y + b.height],
-    ];
-    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
-    for (const [lx, ly] of corners) {
-      const pt = svg.createSVGPoint();
-      pt.x = lx; pt.y = ly;
-      const back = pt.matrixTransform(ctmEl);
-      if (back.x < x1) x1 = back.x;
-      if (back.y < y1) y1 = back.y;
-      if (back.x > x2) x2 = back.x;
-      if (back.y > y2) y2 = back.y;
-    }
-    return { x1, y1, x2, y2 };
-  } catch { return null; }
-}
-
 // --- Draw (bbox-drag primitives) ---
 
 function startDraw(e, p) {
@@ -710,9 +685,11 @@ function localToCanvasPoint(el, x, y) {
   const svg = canvasSvg;
   const pt = svg.createSVGPoint();
   pt.x = x; pt.y = y;
-  const ctmEl = el.getCTM();
-  if (!ctmEl) return { x, y };
-  const back = pt.matrixTransform(ctmEl);
+  // Local -> canvas viewBox user units. NOT getCTM() (that targets the rendered
+  // viewport and bakes in the viewBox scale + letterbox offset). See localToCanvasMatrix.
+  const M = localToCanvasMatrix(el);
+  if (!M) return { x, y };
+  const back = pt.matrixTransform(M);
   return { x: back.x, y: back.y };
 }
 

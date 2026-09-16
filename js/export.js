@@ -2,6 +2,7 @@
 // Same output powers the live source panel, Copy, and Download.
 
 import { getDoc } from "./state.js";
+import { elementBBoxInCanvas } from "./render.js";
 
 const DEFAULT_VIEWBOX = { x: 0, y: 0, width: 1000, height: 700 };
 const TIGHT_PADDING = 8;
@@ -64,25 +65,15 @@ function computeTightViewBox() {
   if (!docLayer || !canvasSvg) return DEFAULT_VIEWBOX;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const el of docLayer.children) {
-    let b;
-    try { b = el.getBBox(); } catch { continue; }
-    if (b.width === 0 && b.height === 0) continue;
-    // getCTM() maps local coords to the ancestor <svg>'s viewBox space directly.
-    const ctmEl = el.getCTM();
-    if (!ctmEl) continue;
-    const corners = [
-      [b.x, b.y], [b.x + b.width, b.y],
-      [b.x, b.y + b.height], [b.x + b.width, b.y + b.height],
-    ];
-    for (const [lx, ly] of corners) {
-      const pt = canvasSvg.createSVGPoint();
-      pt.x = lx; pt.y = ly;
-      const back = pt.matrixTransform(ctmEl);
-      if (back.x < minX) minX = back.x;
-      if (back.y < minY) minY = back.y;
-      if (back.x > maxX) maxX = back.x;
-      if (back.y > maxY) maxY = back.y;
-    }
+    // elementBBoxInCanvas returns AABB corners in canvas viewBox user units,
+    // honoring translate/rotate (see localToCanvasMatrix in render.js).
+    const bb = elementBBoxInCanvas(el);
+    if (!bb) continue;
+    if (bb.width === 0 && bb.height === 0) continue;
+    if (bb.x1 < minX) minX = bb.x1;
+    if (bb.y1 < minY) minY = bb.y1;
+    if (bb.x2 > maxX) maxX = bb.x2;
+    if (bb.y2 > maxY) maxY = bb.y2;
   }
   if (!isFinite(minX)) return DEFAULT_VIEWBOX;
   return {

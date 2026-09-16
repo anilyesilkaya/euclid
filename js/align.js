@@ -6,14 +6,13 @@
 import {
   getDoc, getSelection, mutate, findNode, findPath, emptyTransform,
 } from "./state.js";
-import { getDocLayer } from "./render.js";
+import { getDocLayer, elementBBoxInCanvas } from "./render.js";
 import * as history from "./history.js";
 
 const CANVAS = { x: 0, y: 0, width: 1000, height: 700 };
 
 export function align(op) {
   const doc = getDoc();
-  const canvasSvg = getDocLayer().ownerSVGElement;
   const topIds = topAncestorIds([...getSelection()], doc);
   if (topIds.length === 0) return;
 
@@ -22,7 +21,7 @@ export function align(op) {
   for (const id of topIds) {
     const el = getDocLayer().querySelector(`[data-id="${cssEscape(id)}"]`);
     if (!el) continue;
-    const bbox = elementBBoxInCanvas(el, canvasSvg);
+    const bbox = elementBBoxInCanvas(el);
     if (!bbox) continue;
     items.push({ id, bbox });
   }
@@ -121,34 +120,6 @@ function topAncestorIds(ids, root) {
     }
   }
   return order;
-}
-
-// AABB of an element's local getBBox() corners projected into the canvas viewBox.
-// This transparently handles rotation via getCTM().
-function elementBBoxInCanvas(el, canvasSvg) {
-  try {
-    const b = el.getBBox();
-    // getCTM() maps local coords straight to the ancestor <svg>'s viewBox space.
-    const ctmEl = el.getCTM();
-    if (!ctmEl) return null;
-    const corners = [
-      [b.x, b.y], [b.x + b.width, b.y],
-      [b.x, b.y + b.height], [b.x + b.width, b.y + b.height],
-    ];
-    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
-    for (const [lx, ly] of corners) {
-      const pt = canvasSvg.createSVGPoint();
-      pt.x = lx; pt.y = ly;
-      const back = pt.matrixTransform(ctmEl);
-      if (back.x < x1) x1 = back.x;
-      if (back.y < y1) y1 = back.y;
-      if (back.x > x2) x2 = back.x;
-      if (back.y > y2) y2 = back.y;
-    }
-    return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
-  } catch {
-    return null;
-  }
 }
 
 function cssEscape(s) {
