@@ -259,7 +259,7 @@ function drawSingleSelectionChrome({ id, el, box }) {
 }
 
 function drawMultiSelectionChrome(boxes) {
-  // Union AABB in canvas coordinates (after applying each element's CTM to its local bbox corners).
+  // Union AABB in canvas (viewBox) coordinates from each element's local bbox corners.
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const { el, box } of boxes) {
     const corners = [
@@ -268,9 +268,8 @@ function drawMultiSelectionChrome(boxes) {
       [box.x, box.y + box.height],
       [box.x + box.width, box.y + box.height],
     ];
-    const ctm = el.getCTM();
     for (const [lx, ly] of corners) {
-      // Transform local -> canvas via element CTM relative to the canvas SVG.
+      // Transform local -> canvas viewBox user units (see localToCanvasMatrix).
       const p = localToCanvas(el, lx, ly);
       if (p.x < minX) minX = p.x;
       if (p.y < minY) minY = p.y;
@@ -304,14 +303,52 @@ function safeBBox(el) {
   }
 }
 
+// Matrix mapping `el`'s local coords → canvas viewBox *user units*.
+// NOTE: deliberately NOT el.getCTM(). getCTM() targets the SVG *viewport*
+// (rendered pixels), so it folds in the viewBox→viewport scale and the
+// preserveAspectRatio letterbox offset. Feeding that output back into the
+// chrome/doc layers (which live in user-unit space) double-applies the viewBox
+// transform — guides, marquee AABBs, etc. then render scaled + offset. Composing
+// the relative screen CTMs cancels the shared viewport transform exactly.
+export function localToCanvasMatrix(el) {
+  const svgScreen = canvasSvg.getScreenCTM();
+  const elScreen = el.getScreenCTM();
+  if (!svgScreen || !elScreen) return null;
+  return svgScreen.inverse().multiply(elScreen);
+}
+
+// AABB of el's local getBBox() projected into canvas viewBox coords. Honors any
+// translate/rotate on the element. Returns both {x1,y1,x2,y2} and
+// {x,y,width,height} so every caller's preferred shape works. Null if unmeasurable.
+export function elementBBoxInCanvas(el) {
+  let b;
+  try { b = el.getBBox(); } catch { return null; }
+  const M = localToCanvasMatrix(el);
+  if (!M) return null;
+  const corners = [
+    [b.x, b.y], [b.x + b.width, b.y],
+    [b.x, b.y + b.height], [b.x + b.width, b.y + b.height],
+  ];
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  for (const [lx, ly] of corners) {
+    const pt = canvasSvg.createSVGPoint();
+    pt.x = lx; pt.y = ly;
+    const q = pt.matrixTransform(M);
+    if (q.x < x1) x1 = q.x;
+    if (q.y < y1) y1 = q.y;
+    if (q.x > x2) x2 = q.x;
+    if (q.y > y2) y2 = q.y;
+  }
+  return { x1, y1, x2, y2, x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+}
+
 // Convert a local point on `el` to canvas (viewBox) coords.
-// getCTM() already yields the local→viewBox map for elements inside canvasSvg.
 function localToCanvas(el, x, y) {
   const pt = canvasSvg.createSVGPoint();
   pt.x = x; pt.y = y;
-  const ctmEl = el.getCTM();
-  if (!ctmEl) return { x, y };
-  const back = pt.matrixTransform(ctmEl);
+  const M = localToCanvasMatrix(el);
+  if (!M) return { x, y };
+  const back = pt.matrixTransform(M);
   return { x: back.x, y: back.y };
 }
 
