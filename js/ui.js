@@ -11,15 +11,43 @@ import { align } from "./align.js";
 const TOOL_KEYS = { v: "select", r: "rect", c: "circle", e: "ellipse", l: "line", p: "polyline", t: "text" };
 
 let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity, pOpacityNum;
-let pText, pFontSize, pFontFamily, pTextColor;
+let pText, pFontSize, pFontFamily, pTextColor, pRotation;
 let clipboard = null;
 
 export function mount(root) {
   wireToolbar(root);
   wireProperties(root);
   wireKeyboard();
+  wireCollapsibles(root);
   document.addEventListener("tool-changed", (e) => reflectToolInUI(e.detail));
   reflectToolInUI(getTool());
+}
+
+// Collapsible side sections (Layers, SVG source). The section's own `collapsed`
+// class hides its body; a matching class on #side re-flows the grid so the
+// expanded section takes the freed space. Initial state comes from the markup.
+function wireCollapsibles(root) {
+  const side = root.querySelector("#side");
+  const toggles = root.querySelectorAll(".section-toggle[data-section]");
+  const sectionOf = { layers: "#layers-section", source: "#source-section" };
+
+  const sync = (name) => {
+    const section = root.querySelector(sectionOf[name]);
+    const btn = root.querySelector(`.section-toggle[data-section="${name}"]`);
+    if (!section || !btn) return;
+    const collapsed = section.classList.contains("collapsed");
+    btn.setAttribute("aria-expanded", String(!collapsed));
+    side?.classList.toggle(`${name}-collapsed`, collapsed);
+  };
+
+  for (const btn of toggles) {
+    const name = btn.dataset.section;
+    sync(name); // reflect initial markup state onto #side + aria
+    btn.addEventListener("click", () => {
+      root.querySelector(sectionOf[name])?.classList.toggle("collapsed");
+      sync(name);
+    });
+  }
 }
 
 // Wire the zoom controls to the viewport module. The readout updates via the
@@ -68,6 +96,7 @@ function wireProperties(root) {
   pFontSize = root.querySelector("#p-font-size");
   pFontFamily = root.querySelector("#p-font-family");
   pTextColor = root.querySelector("#p-text-color");
+  pRotation = root.querySelector("#p-rotation");
 
   pFill.addEventListener("input", () => applyToSelection("fill", pFill.value));
   pFill.addEventListener("change", () => historyCommitAfter(() => applyToSelection("fill", pFill.value)));
@@ -85,6 +114,7 @@ function wireProperties(root) {
   pOpacityNum.addEventListener("input", () => {
     const v = clampOpacity(pOpacityNum.value);
     if (v === null) return; // mid-typing / invalid — wait
+    history.ensureTransaction();
     pOpacity.value = v;
     applyToSelection("opacity", v);
   });
@@ -100,8 +130,6 @@ function wireProperties(root) {
   for (const input of [pFill, pStroke, pStrokeWidth, pOpacity, pTextColor]) {
     input.addEventListener("pointerdown", () => history.beginTransaction());
   }
-  // The opacity number box commits as a single entry per edit (focus → change).
-  pOpacityNum.addEventListener("focus", () => history.beginTransaction());
 
   // Text content: for text nodes writes .text; for other nodes writes .label.
   pText.addEventListener("input", () => applyTextContent(pText.value));
@@ -116,6 +144,22 @@ function wireProperties(root) {
 
   pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
   pTextColor.addEventListener("change", () => historyCommitAfter(() => applyTextColor(pTextColor.value)));
+
+  // Rotation (degrees). Live-preview on input, one history entry per edit.
+  pRotation.addEventListener("input", () => {
+    const deg = normalizeAngle(pRotation.value);
+    if (deg === null) return;
+    history.ensureTransaction();
+    applyRotation(deg);
+  });
+  pRotation.addEventListener("change", () => {
+    const deg = normalizeAngle(pRotation.value);
+    if (deg === null) { refreshPropertyPanel(); return; } // revert bad entry
+    pRotation.value = deg;
+    history.ensureTransaction(); // in case no `input` opened one (spinner, paste)
+    applyRotation(deg);
+    history.commit();
+  });
 
   // Align buttons.
   const alignGrid = root.querySelector("#align-grid");
@@ -174,6 +218,34 @@ function applyFontFamily(value) {
       }
     }
   });
+}
+
+function applyRotation(deg) {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  const docLayer = document.getElementById("doc-layer");
+  mutate((root) => {
+    for (const id of ids) {
+      const n = findNode(root, id);
+      if (!n) continue;
+      if (!n.transform) n.transform = emptyTransform();
+      // Pivot around the shape's local bbox center — same convention as the
+      // rotate handle in tools.js. Read it from the rendered element.
+      const el = docLayer?.querySelector(`[data-id="${cssEscapeLocal(id)}"]`);
+      if (el && typeof el.getBBox === "function") {
+        try {
+          const b = el.getBBox();
+          n.transform.cx = b.x + b.width / 2;
+          n.transform.cy = b.y + b.height / 2;
+        } catch { /* not measurable — keep existing pivot */ }
+      }
+      n.transform.rot = deg;
+    }
+  });
+}
+
+function cssEscapeLocal(s) {
+  return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, c => `\\${c}`);
 }
 
 function applyTextColor(value) {
@@ -262,6 +334,12 @@ export function refreshPropertyPanel() {
   pOpacity.value = op;
   pOpacityNum.value = round2(op);
 
+  // Rotation — read from the first selected node's transform. Don't clobber the
+  // field while the user is typing in it (refresh fires on every live-preview mutate).
+  const firstSel = findNode(doc, ids[0]);
+  const rot = firstSel?.transform?.rot || 0;
+  if (document.activeElement !== pRotation) pRotation.value = normalizeAngle(rot) ?? 0;
+
   // Text fields — read from the first selected node.
   const firstId = [...getSelection()][0];
   const firstNode = firstId ? findNode(doc, firstId) : null;
@@ -293,6 +371,16 @@ function firstShape(node) {
 // Parse the opacity number box → a clamped 0..1 number, or null if not yet a
 // valid number (empty / mid-typing) so callers can hold off applying.
 function round2(n) { return Math.round(Number(n) * 100) / 100; }
+
+// Parse the rotation box → degrees in (-180, 180], or null if not yet valid.
+function normalizeAngle(raw) {
+  if (raw === "" || raw === null || raw === undefined) return null;
+  let n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  n = ((n % 360) + 360) % 360;   // 0..360
+  if (n > 180) n -= 360;         // -180..180 for a friendly readout
+  return Math.round(n * 10) / 10;
+}
 
 function clampOpacity(raw) {
   if (raw === "" || raw === null || raw === undefined) return null;

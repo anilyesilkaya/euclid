@@ -63,6 +63,7 @@
               <input type="number" id="p-opacity-num" min="0" max="1" step="0.01">
             </span>
           </label>
+          <label>Rotation <input type="number" id="p-rotation" step="1"></label>
           <div class="props-divider">Text</div>
           <label class="wide">Content <input type="text" id="p-text" placeholder="(shape label or text)"></label>
           <label>Font size <input type="number" id="p-font-size" min="1" step="1"></label>
@@ -106,14 +107,20 @@
 
       <section id="layers-section" aria-label="Layers">
         <div class="layers-head">
-          <h2>Layers</h2>
+          <button type="button" class="section-toggle" data-section="layers" aria-expanded="true">
+            <svg class="section-caret" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="section-title">Layers</span>
+          </button>
         </div>
         <div id="layers-list" role="tree" tabindex="0"></div>
       </section>
 
-      <section id="source-section" aria-label="SVG source">
+      <section id="source-section" class="collapsed" aria-label="SVG source">
         <div class="source-head">
-          <h2>SVG source</h2>
+          <button type="button" class="section-toggle" data-section="source" aria-expanded="false">
+            <svg class="section-caret" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="section-title">SVG source</span>
+          </button>
           <div class="source-btns">
             <label class="tight-toggle" title="Crop viewBox tight to content (8-unit padding)">
               <input type="checkbox" id="tight-mode"> Tight

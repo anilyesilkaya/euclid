@@ -457,6 +457,9 @@
   function beginTransaction() {
     pending = snapshot();
   }
+  function ensureTransaction() {
+    if (pending === null) pending = snapshot();
+  }
   function commit(_label) {
     if (pending === null) return;
     past.push(pending);
@@ -1693,13 +1696,36 @@
   var pFontSize;
   var pFontFamily;
   var pTextColor;
+  var pRotation;
   var clipboard = null;
   function mount3(root) {
     wireToolbar(root);
     wireProperties(root);
     wireKeyboard();
+    wireCollapsibles(root);
     document.addEventListener("tool-changed", (e) => reflectToolInUI(e.detail));
     reflectToolInUI(getTool());
+  }
+  function wireCollapsibles(root) {
+    const side = root.querySelector("#side");
+    const toggles = root.querySelectorAll(".section-toggle[data-section]");
+    const sectionOf = { layers: "#layers-section", source: "#source-section" };
+    const sync = (name) => {
+      const section = root.querySelector(sectionOf[name]);
+      const btn = root.querySelector(`.section-toggle[data-section="${name}"]`);
+      if (!section || !btn) return;
+      const collapsed2 = section.classList.contains("collapsed");
+      btn.setAttribute("aria-expanded", String(!collapsed2));
+      side?.classList.toggle(`${name}-collapsed`, collapsed2);
+    };
+    for (const btn of toggles) {
+      const name = btn.dataset.section;
+      sync(name);
+      btn.addEventListener("click", () => {
+        root.querySelector(sectionOf[name])?.classList.toggle("collapsed");
+        sync(name);
+      });
+    }
   }
   function mountViewport(viewport, svg3) {
     const readout = document.getElementById("zoom-readout");
@@ -1738,6 +1764,7 @@
     pFontSize = root.querySelector("#p-font-size");
     pFontFamily = root.querySelector("#p-font-family");
     pTextColor = root.querySelector("#p-text-color");
+    pRotation = root.querySelector("#p-rotation");
     pFill.addEventListener("input", () => applyToSelection("fill", pFill.value));
     pFill.addEventListener("change", () => historyCommitAfter(() => applyToSelection("fill", pFill.value)));
     pFillNone.addEventListener("change", () => historyRecord(() => applyToSelection("fill", pFillNone.checked ? "none" : pFill.value)));
@@ -1754,6 +1781,7 @@
     pOpacityNum.addEventListener("input", () => {
       const v = clampOpacity(pOpacityNum.value);
       if (v === null) return;
+      ensureTransaction();
       pOpacity.value = v;
       applyToSelection("opacity", v);
     });
@@ -1770,7 +1798,6 @@
     for (const input of [pFill, pStroke, pStrokeWidth, pOpacity, pTextColor]) {
       input.addEventListener("pointerdown", () => beginTransaction());
     }
-    pOpacityNum.addEventListener("focus", () => beginTransaction());
     pText.addEventListener("input", () => applyTextContent(pText.value));
     pText.addEventListener("change", () => historyCommitAfter(() => applyTextContent(pText.value)));
     pText.addEventListener("pointerdown", () => beginTransaction());
@@ -1780,6 +1807,23 @@
     pFontFamily.addEventListener("change", () => historyRecord(() => applyFontFamily(pFontFamily.value)));
     pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
     pTextColor.addEventListener("change", () => historyCommitAfter(() => applyTextColor(pTextColor.value)));
+    pRotation.addEventListener("input", () => {
+      const deg = normalizeAngle(pRotation.value);
+      if (deg === null) return;
+      ensureTransaction();
+      applyRotation(deg);
+    });
+    pRotation.addEventListener("change", () => {
+      const deg = normalizeAngle(pRotation.value);
+      if (deg === null) {
+        refreshPropertyPanel();
+        return;
+      }
+      pRotation.value = deg;
+      ensureTransaction();
+      applyRotation(deg);
+      commit();
+    });
     const alignGrid = root.querySelector("#align-grid");
     alignGrid.addEventListener("click", (e) => {
       const btn = e.target.closest(".align-btn");
@@ -1833,6 +1877,31 @@
         }
       }
     });
+  }
+  function applyRotation(deg) {
+    const ids = [...getSelection()];
+    if (ids.length === 0) return;
+    const docLayer2 = document.getElementById("doc-layer");
+    mutate((root) => {
+      for (const id of ids) {
+        const n = findNode(root, id);
+        if (!n) continue;
+        if (!n.transform) n.transform = emptyTransform();
+        const el = docLayer2?.querySelector(`[data-id="${cssEscapeLocal(id)}"]`);
+        if (el && typeof el.getBBox === "function") {
+          try {
+            const b = el.getBBox();
+            n.transform.cx = b.x + b.width / 2;
+            n.transform.cy = b.y + b.height / 2;
+          } catch {
+          }
+        }
+        n.transform.rot = deg;
+      }
+    });
+  }
+  function cssEscapeLocal(s) {
+    return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
   }
   function applyTextColor(value) {
     const ids = [...getSelection()];
@@ -1908,6 +1977,9 @@
     pStrokeWidth.value = sw;
     pOpacity.value = op;
     pOpacityNum.value = round2(op);
+    const firstSel = findNode(doc2, ids[0]);
+    const rot = firstSel?.transform?.rot || 0;
+    if (document.activeElement !== pRotation) pRotation.value = normalizeAngle(rot) ?? 0;
     const firstId = [...getSelection()][0];
     const firstNode = firstId ? findNode(doc2, firstId) : null;
     if (!firstNode) return;
@@ -1935,6 +2007,14 @@
   }
   function round2(n) {
     return Math.round(Number(n) * 100) / 100;
+  }
+  function normalizeAngle(raw) {
+    if (raw === "" || raw === null || raw === void 0) return null;
+    let n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    n = (n % 360 + 360) % 360;
+    if (n > 180) n -= 360;
+    return Math.round(n * 10) / 10;
   }
   function clampOpacity(raw) {
     if (raw === "" || raw === null || raw === void 0) return null;

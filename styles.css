@@ -195,10 +195,16 @@ html, body {
   background: var(--panel);
   border-left: 1px solid var(--border);
   display: grid;
+  /* Rows: props (auto) · layers-section · source-section.
+     Collapsed sections collapse to their header (auto); the combo classes
+     below pick the row template. Default: source collapsed. */
   grid-template-rows: auto minmax(120px, 1fr) minmax(120px, 1fr);
   min-width: 0;
   min-height: 0;
 }
+#side.layers-collapsed:not(.source-collapsed) { grid-template-rows: auto auto minmax(120px, 1fr); }
+#side:not(.layers-collapsed).source-collapsed { grid-template-rows: auto minmax(120px, 1fr) auto; }
+#side.layers-collapsed.source-collapsed       { grid-template-rows: auto auto auto; }
 #side h2 {
   font-size: 11px;
   font-weight: 600;
@@ -207,6 +213,36 @@ html, body {
   color: var(--text-dim);
   margin: 0 0 8px 0;
 }
+
+/* Collapsible section headers */
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.section-toggle:hover { color: var(--text); }
+.section-caret {
+  flex: 0 0 auto;
+  transition: transform 100ms;
+}
+.section-toggle[aria-expanded="false"] .section-caret { transform: rotate(-90deg); }
+
+/* Hide the body of a collapsed section; keep its header row visible. */
+#layers-section.collapsed #layers-list,
+#source-section.collapsed #source { display: none; }
+#layers-section.collapsed,
+#source-section.collapsed { grid-template-rows: auto; }
 
 /* Property panel */
 #props {
