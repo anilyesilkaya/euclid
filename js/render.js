@@ -8,22 +8,54 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const HANDLE_SIZE = 8;      // px in screen space (via non-scaling stroke + fixed size)
 const ROT_STEM_LEN = 24;    // px in screen space
 
-let docLayer, chromeSelection, chromeTransient, canvasSvg;
+let docLayer, chromeHover, chromeSelection, chromeTransient, canvasSvg;
 
 export function mount(svg) {
   canvasSvg = svg;
   docLayer = svg.querySelector("#doc-layer");
   const chrome = svg.querySelector("#chrome-layer");
+  // Hover sits below selection so a selected shape's handles always draw on top.
+  chromeHover = document.createElementNS(SVG_NS, "g");
+  chromeHover.setAttribute("id", "chrome-hover");
   chromeSelection = document.createElementNS(SVG_NS, "g");
   chromeSelection.setAttribute("id", "chrome-selection");
   chromeTransient = document.createElementNS(SVG_NS, "g");
   chromeTransient.setAttribute("id", "chrome-transient");
+  chrome.appendChild(chromeHover);
   chrome.appendChild(chromeSelection);
   chrome.appendChild(chromeTransient);
 }
 
 export function getTransientLayer() { return chromeTransient; }
 export function getDocLayer() { return docLayer; }
+
+// --- Hover highlight (managed by tools.js on pointer move) ---
+// Independent of the selection re-render so it never fights renderAll(). Mirrors
+// the hovered element's transform and draws a thin outline around its local bbox.
+export function setHoverOutline(id) {
+  clearHoverOutline();
+  if (!id) return;
+  const el = docLayer.querySelector(`[data-id="${cssEscape(id)}"]`);
+  if (!el) return;
+  const box = safeBBox(el);
+  if (!(box.width > 0 || box.height > 0)) return;
+  const wrap = document.createElementNS(SVG_NS, "g");
+  const t = el.getAttribute("transform");
+  if (t) wrap.setAttribute("transform", t);
+  const outline = document.createElementNS(SVG_NS, "rect");
+  outline.setAttribute("class", "hover-outline");
+  outline.setAttribute("x", box.x);
+  outline.setAttribute("y", box.y);
+  outline.setAttribute("width", box.width);
+  outline.setAttribute("height", box.height);
+  wrap.appendChild(outline);
+  chromeHover.appendChild(wrap);
+}
+
+export function clearHoverOutline() {
+  if (!chromeHover) return;
+  while (chromeHover.firstChild) chromeHover.removeChild(chromeHover.firstChild);
+}
 
 export function renderAll() {
   renderDoc();
