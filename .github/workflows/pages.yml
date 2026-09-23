@@ -22,16 +22,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - run: npm ci
-
-      - name: Build bundle
-        run: npm run build
-
+      # No build step: js/euclid.bundle.js is committed to the repo, so the
+      # site is deployed straight from the checked-in static files. (Rebuild
+      # locally with `npm run build` after editing the js/ modules.)
       - name: Assemble site
         run: |
           mkdir -p _site/js
