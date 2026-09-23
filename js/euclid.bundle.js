@@ -1682,7 +1682,7 @@
   }
 
   // js/ui.js
-  var TOOL_KEYS = { v: "select", r: "rect", c: "circle", e: "ellipse", l: "line", p: "polyline", t: "text" };
+  var TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", l: "line", p: "polyline", t: "text" };
   var propsEmpty;
   var propsForm;
   var pFill;

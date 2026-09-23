@@ -8,7 +8,7 @@ import * as history from "./history.js";
 import { setTool, getTool, cancelPolyline, isTextEditing, openLabelEditor } from "./tools.js";
 import { align } from "./align.js";
 
-const TOOL_KEYS = { v: "select", r: "rect", c: "circle", e: "ellipse", l: "line", p: "polyline", t: "text" };
+const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", l: "line", p: "polyline", t: "text" };
 
 let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity, pOpacityNum;
 let pText, pFontSize, pFontFamily, pTextColor, pRotation;
