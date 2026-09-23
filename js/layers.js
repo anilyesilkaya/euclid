@@ -82,6 +82,7 @@ function iconFor(node) {
     case "circle":   return s(`<circle cx="7" cy="7" r="5" ${stroke}/>`);
     case "ellipse":  return s(`<ellipse cx="7" cy="7" rx="5.5" ry="3.5" ${stroke}/>`);
     case "line":     return s(`<line x1="2" y1="11" x2="12" y2="3" ${stroke}/>`);
+    case "connector":return s(`<line x1="2" y1="11" x2="10" y2="3" ${stroke}/><path d="M8,1.5 12,3 10.5,6.5z" fill="currentColor"/>`);
     case "polyline": return s(`<polyline points="2,10 5,5 9,8 12,3" ${stroke}/>`);
     case "path":     return s(`<path d="M2,10 C4,4 9,4 12,10" ${stroke}/>`);
     case "text":     return s(`<text x="7" y="11" text-anchor="middle" font-family="serif" font-size="12" font-weight="700" fill="currentColor">T</text>`);

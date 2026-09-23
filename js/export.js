@@ -2,7 +2,7 @@
 // Same output powers the live source panel, Copy, and Download.
 
 import { getDoc } from "./state.js";
-import { elementBBoxInCanvas } from "./render.js";
+import { elementBBoxInCanvas, resolveConnector } from "./render.js";
 
 const DEFAULT_VIEWBOX = { x: 0, y: 0, width: 1000, height: 700 };
 const TIGHT_PADDING = 8;
@@ -43,11 +43,29 @@ export function serialize() {
     `<?xml version="1.0" encoding="UTF-8"?>`,
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbStr}">`,
   ];
+  // Emit arrowhead marker defs only when some connector uses them.
+  lines.push(...arrowDefs(doc));
   for (const child of doc.children) {
     lines.push(...emitNode(child, 1));
   }
   lines.push(`</svg>`);
   return lines.join("\n") + "\n";
+}
+
+function arrowDefs(doc) {
+  const needsEnd = doc.children.some(c => c.type === "connector" && c.arrowEnd);
+  const needsStart = doc.children.some(c => c.type === "connector" && c.arrowStart);
+  if (!needsEnd && !needsStart) return [];
+  const out = [`${INDENT}<defs>`];
+  const marker = (id) => [
+    `${INDENT}${INDENT}<marker id="${id}" markerWidth="12" markerHeight="12" refX="9" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse">`,
+    `${INDENT}${INDENT}${INDENT}<path d="M0 0L10 5L0 10z" fill="context-stroke"/>`,
+    `${INDENT}${INDENT}</marker>`,
+  ];
+  if (needsEnd) out.push(...marker("arrow-end"));
+  if (needsStart) out.push(...marker("arrow-start"));
+  out.push(`${INDENT}</defs>`);
+  return out;
 }
 
 export function setTightMode(on) {
@@ -86,6 +104,27 @@ function computeTightViewBox() {
 
 function emitNode(node, depth) {
   const pad = INDENT.repeat(depth);
+
+  // Connectors carry no stored geometry — resolve to a concrete <line> at export
+  // time from the live shape boxes, so exported SVG is self-contained.
+  if (node.type === "connector") {
+    const g = resolveConnector(node);
+    if (!g || !g.valid) return []; // dangling connector: emit nothing
+    const parts = [
+      `x1="${round(g.x1)}"`, `y1="${round(g.y1)}"`,
+      `x2="${round(g.x2)}"`, `y2="${round(g.y2)}"`,
+    ];
+    for (const k of PRESENTATION_ATTRS) {
+      if (!(k in (node.attrs || {}))) continue;
+      const v = node.attrs[k];
+      if (isDefault(k, v)) continue;
+      parts.push(`${k}="${formatValue(k, v)}"`);
+    }
+    if (node.arrowEnd) parts.push(`marker-end="url(#arrow-end)"`);
+    if (node.arrowStart) parts.push(`marker-start="url(#arrow-start)"`);
+    return [`${pad}<line ${parts.join(" ")}/>`];
+  }
+
   const attrs = buildAttrs(node);
   const attrStr = attrs.length ? " " + attrs.join(" ") : "";
 
