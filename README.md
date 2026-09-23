@@ -19,15 +19,25 @@ A tiny, zero-dependency SVG editor that runs in the browser. Draw primitives, ar
 
 ## Getting started
 
-No build tools are required. Any static file server works:
+Just open `index.html` in a browser — double-click it or drag it onto a browser
+window. No server required. The page loads a prebuilt bundle (`js/euclid.bundle.js`),
+which works over the `file://` protocol.
+
+Requires a modern browser (`structuredClone`, `crypto.randomUUID`).
+
+### Editing the source
+
+The source of truth is the modular `js/*.js` files. `index.html` loads the bundled
+output, so after changing any module, rebuild it:
 
 ```bash
-python -m http.server 8765
+npm install      # once, installs esbuild
+npm run build    # regenerate js/euclid.bundle.js
 ```
 
-Then open [http://localhost:8765/](http://localhost:8765/).
-
-Requires a modern browser (ES modules, `structuredClone`, `crypto.randomUUID`).
+Use `npm run watch` to rebuild automatically on save. (Because ES modules can't be
+fetched over `file://`, the modular sources themselves need a static server — e.g.
+`python -m http.server` — if you want to load them un-bundled during development.)
 
 ## Keyboard shortcuts
 
@@ -63,6 +73,7 @@ Illustrator's default "SVG 1.1" export (with `.st0 { fill: #... }` class styling
 index.html          entry point; wires up the toolbar, canvas, panels
 styles.css          all styling (dark UI, light canvas)
 js/
+  euclid.bundle.js  generated single-file bundle loaded by index.html (npm run build)
   main.js           bootstrap — mount modules and wire the pub/sub loop
   state.js          document tree + selection + observer subscribe/notify
   history.js        snapshot-based undo/redo (200-entry ring)
