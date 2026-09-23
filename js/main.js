@@ -8,12 +8,15 @@ import * as exp from "./export.js";
 import * as importer from "./import.js";
 import * as layers from "./layers.js";
 import * as viewport from "./viewport.js";
+import * as grid from "./grid.js";
 
 const svg = document.getElementById("canvas");
 render.mount(svg);
+grid.mount(svg);
 tools.mount(svg);
 ui.mount(document);
 ui.mountViewport(viewport, svg);
+ui.mountGrid(grid);
 exp.mountPanel(
   document.getElementById("source"),
   document.getElementById("copy-btn"),
