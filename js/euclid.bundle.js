@@ -122,6 +122,7 @@
   var HANDLE_SIZE = 8;
   var ROT_STEM_LEN = 24;
   var docLayer;
+  var chromeHover;
   var chromeSelection;
   var chromeTransient;
   var canvasSvg;
@@ -129,10 +130,13 @@
     canvasSvg = svg3;
     docLayer = svg3.querySelector("#doc-layer");
     const chrome = svg3.querySelector("#chrome-layer");
+    chromeHover = document.createElementNS(SVG_NS, "g");
+    chromeHover.setAttribute("id", "chrome-hover");
     chromeSelection = document.createElementNS(SVG_NS, "g");
     chromeSelection.setAttribute("id", "chrome-selection");
     chromeTransient = document.createElementNS(SVG_NS, "g");
     chromeTransient.setAttribute("id", "chrome-transient");
+    chrome.appendChild(chromeHover);
     chrome.appendChild(chromeSelection);
     chrome.appendChild(chromeTransient);
   }
@@ -141,6 +145,29 @@
   }
   function getDocLayer() {
     return docLayer;
+  }
+  function setHoverOutline(id) {
+    clearHoverOutline();
+    if (!id) return;
+    const el = docLayer.querySelector(`[data-id="${cssEscape(id)}"]`);
+    if (!el) return;
+    const box = safeBBox(el);
+    if (!(box.width > 0 || box.height > 0)) return;
+    const wrap = document.createElementNS(SVG_NS, "g");
+    const t = el.getAttribute("transform");
+    if (t) wrap.setAttribute("transform", t);
+    const outline = document.createElementNS(SVG_NS, "rect");
+    outline.setAttribute("class", "hover-outline");
+    outline.setAttribute("x", box.x);
+    outline.setAttribute("y", box.y);
+    outline.setAttribute("width", box.width);
+    outline.setAttribute("height", box.height);
+    wrap.appendChild(outline);
+    chromeHover.appendChild(wrap);
+  }
+  function clearHoverOutline() {
+    if (!chromeHover) return;
+    while (chromeHover.firstChild) chromeHover.removeChild(chromeHover.firstChild);
   }
   function renderAll() {
     renderDoc();
@@ -755,6 +782,8 @@
   // js/tools.js
   var CANVAS_BBOX = { x: 0, y: 0, width: 1e3, height: 700 };
   var SNAP_THRESHOLD = 6;
+  var DRAG_THRESHOLD = 3;
+  var hoveredId = null;
   var SVG_NS3 = "http://www.w3.org/2000/svg";
   var DEFAULT_STYLE = {
     fill: "#88ccee",
@@ -777,11 +806,15 @@
   var canvasSvg2;
   var polylineInProgress = null;
   var gesture = null;
+  var downClient = null;
   function mount3(svg3) {
     canvasSvg2 = svg3;
     svg3.addEventListener("pointerdown", onPointerDown);
     svg3.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
+    svg3.addEventListener("pointerleave", () => {
+      if (!gesture) setHover(null);
+    });
     svg3.addEventListener("dblclick", onDoubleClick);
     svg3.addEventListener("contextmenu", onContextMenu);
   }
@@ -790,6 +823,7 @@
     cancelPolyline();
     currentTool = name;
     canvasSvg2.classList.toggle("draw-mode", name !== "select");
+    setHover(null);
     document.dispatchEvent(new CustomEvent("tool-changed", { detail: name }));
   }
   function getTool() {
@@ -799,6 +833,8 @@
     if (e.button !== 0) return;
     const p = toCanvasPoint(e);
     const target = e.target;
+    setHover(null);
+    downClient = { x: e.clientX, y: e.clientY };
     const role = target.getAttribute && target.getAttribute("data-role");
     if (role === "resize") return startResize(e, target, p);
     if (role === "rotate") return startRotate(e, target, p);
@@ -812,11 +848,24 @@
     if (polylineInProgress) {
       updatePolylinePreview(p);
     }
-    if (!gesture) return;
+    if (!gesture) {
+      updateHover(e);
+      return;
+    }
     const dx = p.x - gesture.origin.x;
     const dy = p.y - gesture.origin.y;
     gesture.last = p;
-    gesture.moved = gesture.moved || Math.hypot(dx, dy) > 1.5;
+    if (!gesture.moved && downClient) {
+      const sdx = e.clientX - downClient.x;
+      const sdy = e.clientY - downClient.y;
+      if (Math.hypot(sdx, sdy) <= DRAG_THRESHOLD) return;
+      gesture.moved = true;
+      if (gesture.type === "move") {
+        canvasSvg2.classList.add("dragging");
+        canvasSvg2.classList.toggle("will-duplicate", !!gesture.duplicate);
+        beginMovePayload(e);
+      }
+    }
     if (gesture.type === "draw") {
       updateDraw(p, e);
     } else if (gesture.type === "move") {
@@ -829,7 +878,33 @@
       updateMarquee(p);
     }
   }
+  function updateHover(e) {
+    if (currentTool !== "select") {
+      setHover(null);
+      return;
+    }
+    const role = e.target.getAttribute && e.target.getAttribute("data-role");
+    if (role === "resize" || role === "rotate") {
+      setHover(null);
+      return;
+    }
+    const hit = hitTest(e.target);
+    const id = hit ? pickSelectionId(hit.id) : null;
+    setHover(id);
+    const dup = (e.ctrlKey || e.metaKey) && id;
+    canvasSvg2.classList.toggle("will-duplicate", !!dup);
+  }
+  function setHover(id) {
+    canvasSvg2.classList.toggle("over-shape", !!id && currentTool === "select");
+    if (!id) canvasSvg2.classList.remove("will-duplicate");
+    if (id === hoveredId) return;
+    hoveredId = id;
+    if (id && !getSelection().has(id)) setHoverOutline(id);
+    else clearHoverOutline();
+  }
   function onPointerUp(e) {
+    downClient = null;
+    canvasSvg2.classList.remove("dragging", "will-duplicate");
     if (!gesture) return;
     const g = gesture;
     gesture = null;
@@ -892,12 +967,15 @@
     }
     const id = pickSelectionId(hit.id);
     const sel = getSelection();
+    const dup = e.ctrlKey || e.metaKey;
     if (e.shiftKey) {
       toggleSelection(id);
+    } else if (dup) {
+      if (!sel.has(id)) setSelection([id]);
     } else if (!sel.has(id)) {
       setSelection([id]);
     }
-    startMove(p);
+    startMove(p, e);
   }
   function pickSelectionId(leafId) {
     const top = topAncestor(getDoc(), leafId);
@@ -914,13 +992,48 @@
     }
     return null;
   }
-  function startMove(p) {
+  function startMove(p, e) {
     const sel = [...getSelection()];
     if (sel.length === 0) return;
     beginTransaction();
+    gesture = {
+      type: "move",
+      origin: p,
+      last: p,
+      moved: false,
+      duplicate: !!(e && (e.ctrlKey || e.metaKey)),
+      initialSel: sel,
+      ids: [],
+      orig: /* @__PURE__ */ new Map(),
+      movingUnion: null,
+      stationaryBBoxes: []
+    };
+  }
+  function beginMovePayload(e) {
+    const g = gesture;
+    if (g.duplicate) {
+      const newIds = [];
+      mutate((root) => {
+        const topIds = /* @__PURE__ */ new Set();
+        for (const id of g.initialSel) {
+          const path = findPath(root, id);
+          if (path && path.length) topIds.add(path[0].id);
+        }
+        for (const child of root.children) {
+          if (!topIds.has(child.id)) continue;
+          const copy = deepReId(child);
+          root.children.push(copy);
+          newIds.push(copy.id);
+        }
+      });
+      if (newIds.length) setSelection(newIds);
+    }
+    computeMovePayload(g);
+  }
+  function computeMovePayload(g) {
     const doc2 = getDoc();
     const movingTopIds = /* @__PURE__ */ new Set();
-    for (const id of sel) {
+    for (const id of getSelection()) {
       const top = topAncestor(doc2, id);
       if (top) movingTopIds.add(top.id);
     }
@@ -942,16 +1055,17 @@
       const b = el && elementBBoxInCanvas(el);
       if (b) stationaryBBoxes.push({ x: b.x1, y: b.y1, width: b.x2 - b.x1, height: b.y2 - b.y1 });
     }
-    gesture = {
-      type: "move",
-      origin: p,
-      last: p,
-      moved: false,
-      ids: [...movingTopIds],
-      orig,
-      movingUnion,
-      stationaryBBoxes
-    };
+    g.ids = [...movingTopIds];
+    g.orig = orig;
+    g.movingUnion = movingUnion;
+    g.stationaryBBoxes = stationaryBBoxes;
+  }
+  function deepReId(node) {
+    const copy = structuredClone(node);
+    walk(copy, (n) => {
+      n.id = newId(n.type === "group" ? "g" : "n");
+    });
+    return copy;
   }
   function updateMove(dx, dy, e) {
     const { ids, orig, movingUnion, stationaryBBoxes } = gesture;
@@ -2282,7 +2396,7 @@
         for (const id of topIds) {
           const node = findNode(root, id);
           if (!node) continue;
-          const copy = deepReId(node);
+          const copy = deepReId2(node);
           if (!copy.transform) copy.transform = emptyTransform();
           copy.transform.tx = (copy.transform.tx || 0) + 10;
           copy.transform.ty = (copy.transform.ty || 0) + 10;
@@ -2293,7 +2407,7 @@
     });
     setSelection(newIds);
   }
-  function deepReId(node) {
+  function deepReId2(node) {
     const copy = structuredClone(node);
     walk(copy, (n) => {
       n.id = newId(n.type === "group" ? "g" : "n");
@@ -2323,7 +2437,7 @@
     record(() => {
       mutate((root) => {
         for (const src of clipboard) {
-          const copy = deepReId(src);
+          const copy = deepReId2(src);
           if (!copy.transform) copy.transform = emptyTransform();
           copy.transform.tx = (copy.transform.tx || 0) + 10;
           copy.transform.ty = (copy.transform.ty || 0) + 10;

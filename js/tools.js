@@ -3,15 +3,18 @@
 
 import {
   getDoc, getSelection, setSelection, toggleSelection, clearSelection,
-  mutate, newId, emptyTransform, findNode, findPath, topAncestor,
+  mutate, newId, emptyTransform, findNode, findPath, topAncestor, walk,
 } from "./state.js";
 import * as history from "./history.js";
-import { toCanvasPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix } from "./render.js";
+import { toCanvasPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix, setHoverOutline, clearHoverOutline } from "./render.js";
 import * as guides from "./guides.js";
 import * as grid from "./grid.js";
 
 const CANVAS_BBOX = { x: 0, y: 0, width: 1000, height: 700 };
 const SNAP_THRESHOLD = 6; // canvas units — feels right at default zoom
+const DRAG_THRESHOLD = 3; // screen px the pointer must travel before a move "takes"
+
+let hoveredId = null;     // top-level id currently under the pointer (select tool)
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -39,6 +42,7 @@ let polylineInProgress = null;  // { id, points, previewLineId } while drawing
 
 // Gesture state
 let gesture = null;
+let downClient = null;    // {x,y} client coords at pointerdown — for the drag threshold
 
 export function mount(svg) {
   canvasSvg = svg;
@@ -46,6 +50,7 @@ export function mount(svg) {
   svg.addEventListener("pointerdown", onPointerDown);
   svg.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
+  svg.addEventListener("pointerleave", () => { if (!gesture) setHover(null); });
   svg.addEventListener("dblclick", onDoubleClick);
   svg.addEventListener("contextmenu", onContextMenu);
 }
@@ -55,6 +60,7 @@ export function setTool(name) {
   cancelPolyline();
   currentTool = name;
   canvasSvg.classList.toggle("draw-mode", name !== "select");
+  setHover(null); // hover highlight is a select-tool affordance
   document.dispatchEvent(new CustomEvent("tool-changed", { detail: name }));
 }
 export function getTool() { return currentTool; }
@@ -65,6 +71,11 @@ function onPointerDown(e) {
   if (e.button !== 0) return;
   const p = toCanvasPoint(e);
   const target = e.target;
+
+  // A gesture is starting: drop the hover highlight and remember the screen-space
+  // origin so the move gesture can apply a zoom-independent drag threshold.
+  setHover(null);
+  downClient = { x: e.clientX, y: e.clientY };
 
   // Chrome-layer roles override everything else.
   const role = target.getAttribute && target.getAttribute("data-role");
@@ -86,11 +97,29 @@ function onPointerMove(e) {
     updatePolylinePreview(p);
   }
 
-  if (!gesture) return;
+  if (!gesture) {
+    updateHover(e);
+    return;
+  }
+
   const dx = p.x - gesture.origin.x;
   const dy = p.y - gesture.origin.y;
   gesture.last = p;
-  gesture.moved = gesture.moved || Math.hypot(dx, dy) > 1.5;
+
+  // Drag threshold: measure in screen pixels so it feels the same at every zoom.
+  // A move gesture doesn't "take" (and doesn't spawn a Ctrl-drag duplicate) until
+  // the pointer clears the threshold — a click that jitters shouldn't nudge.
+  if (!gesture.moved && downClient) {
+    const sdx = e.clientX - downClient.x;
+    const sdy = e.clientY - downClient.y;
+    if (Math.hypot(sdx, sdy) <= DRAG_THRESHOLD) return;
+    gesture.moved = true;
+    if (gesture.type === "move") {
+      canvasSvg.classList.add("dragging");
+      canvasSvg.classList.toggle("will-duplicate", !!gesture.duplicate);
+      beginMovePayload(e);
+    }
+  }
 
   if (gesture.type === "draw") {
     updateDraw(p, e);
@@ -105,7 +134,31 @@ function onPointerMove(e) {
   }
 }
 
+// Hover highlight + cursor feedback while idle with the select tool.
+function updateHover(e) {
+  if (currentTool !== "select") { setHover(null); return; }
+  const role = e.target.getAttribute && e.target.getAttribute("data-role");
+  if (role === "resize" || role === "rotate") { setHover(null); return; }
+  const hit = hitTest(e.target);
+  const id = hit ? pickSelectionId(hit.id) : null;
+  setHover(id);
+  const dup = (e.ctrlKey || e.metaKey) && id;
+  canvasSvg.classList.toggle("will-duplicate", !!dup);
+}
+
+function setHover(id) {
+  canvasSvg.classList.toggle("over-shape", !!id && currentTool === "select");
+  if (!id) canvasSvg.classList.remove("will-duplicate");
+  if (id === hoveredId) return;
+  hoveredId = id;
+  // Don't outline a shape that's already selected — its selection chrome covers it.
+  if (id && !getSelection().has(id)) setHoverOutline(id);
+  else clearHoverOutline();
+}
+
 function onPointerUp(e) {
+  downClient = null;
+  canvasSvg.classList.remove("dragging", "will-duplicate");
   if (!gesture) return;
   const g = gesture;
   gesture = null;
@@ -174,13 +227,18 @@ function handleSelectDown(e, p, target) {
   }
   const id = pickSelectionId(hit.id);
   const sel = getSelection();
+  const dup = e.ctrlKey || e.metaKey;
   if (e.shiftKey) {
     toggleSelection(id);
+  } else if (dup) {
+    // Ctrl/Cmd-drag duplicates. If the clicked shape isn't in the selection,
+    // duplicate just it; otherwise duplicate the whole current selection.
+    if (!sel.has(id)) setSelection([id]);
   } else if (!sel.has(id)) {
     setSelection([id]);
   }
   // Begin move gesture on the current selection (which now includes id).
-  startMove(p);
+  startMove(p, e);
 }
 
 function pickSelectionId(leafId) {
@@ -204,20 +262,56 @@ function hitTest(target) {
 
 // --- Move gesture ---
 
-function startMove(p) {
+function startMove(p, e) {
   const sel = [...getSelection()];
   if (sel.length === 0) return;
   history.beginTransaction();
+  // Payload (snapshots, bboxes) is deferred to beginMovePayload() once the drag
+  // threshold is crossed — so a Ctrl-drag only duplicates on an actual drag, and
+  // a jittery click never nudges. duplicate = Ctrl/Cmd held at pointerdown.
+  gesture = {
+    type: "move", origin: p, last: p, moved: false,
+    duplicate: !!(e && (e.ctrlKey || e.metaKey)),
+    initialSel: sel,
+    ids: [], orig: new Map(), movingUnion: null, stationaryBBoxes: [],
+  };
+}
 
-  // Reduce the selection to the top-ancestor set — that's what actually gets moved.
+// Called from onPointerMove when the drag threshold is first crossed.
+function beginMovePayload(e) {
+  const g = gesture;
+  // Ctrl/Cmd-drag: clone the selection in place and drag the copies instead.
+  if (g.duplicate) {
+    const newIds = [];
+    mutate((root) => {
+      const topIds = new Set();
+      for (const id of g.initialSel) {
+        const path = findPath(root, id);
+        if (path && path.length) topIds.add(path[0].id);
+      }
+      // Preserve paint order so stacking of the copies matches the originals.
+      for (const child of root.children) {
+        if (!topIds.has(child.id)) continue;
+        const copy = deepReId(child);         // sits exactly atop the original
+        root.children.push(copy);
+        newIds.push(copy.id);
+      }
+    });
+    if (newIds.length) setSelection(newIds);
+  }
+  computeMovePayload(g);
+}
+
+// Snapshot original transforms + canvas bboxes for the current selection (the
+// moving set) and the stationary top-level nodes we align against.
+function computeMovePayload(g) {
   const doc = getDoc();
   const movingTopIds = new Set();
-  for (const id of sel) {
+  for (const id of getSelection()) {
     const top = topAncestor(doc, id);
     if (top) movingTopIds.add(top.id);
   }
 
-  // Snapshot original transforms and per-node canvas bboxes for the moving set.
   const orig = new Map();
   const movingBBoxes = [];
   for (const id of movingTopIds) {
@@ -228,10 +322,8 @@ function startMove(p) {
     const b = el && elementBBoxInCanvas(el);
     if (b) movingBBoxes.push({ x: b.x1, y: b.y1, width: b.x2 - b.x1, height: b.y2 - b.y1 });
   }
-  // Union bbox of the moving set — the frame we align to stationary edges/centers.
   const movingUnion = unionOfBBoxes(movingBBoxes);
 
-  // Snapshot stationary top-level bboxes (every top-level child not in the moving set).
   const stationaryBBoxes = [];
   for (const child of doc.children) {
     if (movingTopIds.has(child.id)) continue;
@@ -240,11 +332,18 @@ function startMove(p) {
     if (b) stationaryBBoxes.push({ x: b.x1, y: b.y1, width: b.x2 - b.x1, height: b.y2 - b.y1 });
   }
 
-  gesture = {
-    type: "move", origin: p, last: p, moved: false,
-    ids: [...movingTopIds], orig,
-    movingUnion, stationaryBBoxes,
-  };
+  g.ids = [...movingTopIds];
+  g.orig = orig;
+  g.movingUnion = movingUnion;
+  g.stationaryBBoxes = stationaryBBoxes;
+}
+
+// Deep-clone a node subtree with fresh ids. Local twin of ui.js's helper so the
+// move gesture doesn't depend on the UI module.
+function deepReId(node) {
+  const copy = structuredClone(node);
+  walk(copy, (n) => { n.id = newId(n.type === "group" ? "g" : "n"); });
+  return copy;
 }
 
 function updateMove(dx, dy, e) {

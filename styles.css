@@ -79,6 +79,12 @@ html, body {
 #canvas.draw-mode { cursor: crosshair; }
 #canvas.space-pan { cursor: grab; }
 #canvas.panning { cursor: grabbing; }
+/* Select tool: show a move cursor when hovering a shape, and a copy cursor when
+   Ctrl/Cmd is held (duplicate-drag). Set from tools.js. */
+#canvas.over-shape { cursor: move; }
+#canvas.over-shape.will-duplicate { cursor: copy; }
+#canvas.dragging { cursor: move; }
+#canvas.dragging.will-duplicate { cursor: copy; }
 
 /* The white "page" — the 1000x700 world the document lives in. */
 #page {
@@ -179,6 +185,13 @@ html, body {
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
   fill: none;
+}
+#chrome-layer .hover-outline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 #chrome-layer .marquee {
   fill: var(--marquee);
