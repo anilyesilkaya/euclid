@@ -653,6 +653,105 @@
     for (const el of olds) el.remove();
   }
 
+  // js/grid.js
+  var grid_exports = {};
+  __export(grid_exports, {
+    getGridSize: () => getGridSize,
+    getState: () => getState,
+    isSnap: () => isSnap,
+    isVisible: () => isVisible,
+    mount: () => mount2,
+    onStateChange: () => onStateChange,
+    setSnap: () => setSnap,
+    setVisible: () => setVisible,
+    snapDelta: () => snapDelta,
+    snapPoint: () => snapPoint,
+    snapScalar: () => snapScalar,
+    toggleSnap: () => toggleSnap,
+    toggleVisible: () => toggleVisible
+  });
+  var GRID_SIZE = 10;
+  var STORAGE_VISIBLE = "euclid.grid.visible";
+  var STORAGE_SNAP = "euclid.grid.snap";
+  var gridRect = null;
+  var visible = false;
+  var snap = false;
+  var listeners = [];
+  function mount2(svg3) {
+    gridRect = svg3.querySelector("#grid-rect");
+    visible = readBool(STORAGE_VISIBLE, false);
+    snap = readBool(STORAGE_SNAP, false);
+    applyVisible();
+    emit();
+  }
+  function onStateChange(fn) {
+    if (typeof fn === "function") listeners.push(fn);
+  }
+  function emit() {
+    const s = getState();
+    for (const fn of listeners) fn(s);
+  }
+  function getGridSize() {
+    return GRID_SIZE;
+  }
+  function isVisible() {
+    return visible;
+  }
+  function isSnap() {
+    return snap;
+  }
+  function getState() {
+    return { visible, snap };
+  }
+  function setVisible(on) {
+    visible = !!on;
+    applyVisible();
+    writeBool(STORAGE_VISIBLE, visible);
+    emit();
+  }
+  function setSnap(on) {
+    snap = !!on;
+    writeBool(STORAGE_SNAP, snap);
+    emit();
+  }
+  function toggleVisible() {
+    setVisible(!visible);
+  }
+  function toggleSnap() {
+    setSnap(!snap);
+  }
+  function applyVisible() {
+    if (gridRect) gridRect.style.display = visible ? "" : "none";
+  }
+  function snapScalar(v) {
+    return Math.round(v / GRID_SIZE) * GRID_SIZE;
+  }
+  function snapPoint(x, y) {
+    if (!snap) return { x, y };
+    return { x: snapScalar(x), y: snapScalar(y) };
+  }
+  function snapDelta(bbox) {
+    if (!snap || !bbox) return { dx: 0, dy: 0 };
+    return {
+      dx: snapScalar(bbox.x) - bbox.x,
+      dy: snapScalar(bbox.y) - bbox.y
+    };
+  }
+  function readBool(key, fallback) {
+    try {
+      const v = window.localStorage.getItem(key);
+      return v === null ? fallback : v === "1";
+    } catch {
+      return fallback;
+    }
+  }
+  function writeBool(key, val) {
+    try {
+      window.localStorage.setItem(key, val ? "1" : "0");
+    } catch {
+    }
+  }
+
   // js/tools.js
   var CANVAS_BBOX = { x: 0, y: 0, width: 1e3, height: 700 };
   var SNAP_THRESHOLD = 6;
@@ -678,7 +777,7 @@
   var canvasSvg2;
   var polylineInProgress = null;
   var gesture = null;
-  function mount2(svg3) {
+  function mount3(svg3) {
     canvasSvg2 = svg3;
     svg3.addEventListener("pointerdown", onPointerDown);
     svg3.addEventListener("pointermove", onPointerMove);
@@ -864,15 +963,20 @@
         width: movingUnion.width,
         height: movingUnion.height
       };
-      const snap = computeSnap({
+      const snap2 = computeSnap({
         movingBBox: proposed,
         stationaryBBoxes,
         canvasBBox: CANVAS_BBOX,
         threshold: SNAP_THRESHOLD
       });
-      snapDx = snap.dx;
-      snapDy = snap.dy;
-      drawGuides(snap.guides);
+      snapDx = snap2.dx;
+      snapDy = snap2.dy;
+      drawGuides(snap2.guides);
+      if (isSnap()) {
+        const g = snapDelta(proposed);
+        if (snapDx === 0) snapDx = g.dx;
+        if (snapDy === 0) snapDy = g.dy;
+      }
     } else {
       clearGuides();
     }
@@ -948,6 +1052,7 @@
     }
   }
   function startDraw(e, p) {
+    if (isSnap() && !e.altKey) p = snapPoint(p.x, p.y);
     const id = newId();
     const node = seedNodeFor(currentTool, id, p);
     if (!node) return;
@@ -976,6 +1081,7 @@
   }
   function updateDraw(p, e) {
     const { origin, id, tool } = gesture;
+    if (isSnap() && !e.altKey) p = snapPoint(p.x, p.y);
     let dx = p.x - origin.x;
     let dy = p.y - origin.y;
     if (e.shiftKey && (tool === "rect" || tool === "ellipse" || tool === "circle")) {
@@ -1147,6 +1253,7 @@
   }
   function updateResize(p, _e) {
     const { id, dir, origin, orig } = gesture;
+    if (isSnap() && !_e?.altKey) p = snapPoint(p.x, p.y);
     const dx = p.x - origin.x;
     const dy = p.y - origin.y;
     mutate((root) => {
@@ -1698,7 +1805,8 @@
   var pTextColor;
   var pRotation;
   var clipboard = null;
-  function mount3(root) {
+  var gridApi = null;
+  function mount4(root) {
     wireToolbar(root);
     wireProperties(root);
     wireKeyboard();
@@ -1738,6 +1846,21 @@
     byId("zoom-fit")?.addEventListener("click", () => viewport.fit());
     readout?.addEventListener("click", () => viewport.resetZoom());
     viewport.fit();
+  }
+  function mountGrid(grid) {
+    gridApi = grid;
+    const gridBtn = document.getElementById("grid-toggle");
+    const snapBtn = document.getElementById("snap-toggle");
+    const reflect = ({ visible: visible2, snap: snap2 }) => {
+      gridBtn?.setAttribute("aria-pressed", String(visible2));
+      gridBtn?.classList.toggle("active", visible2);
+      snapBtn?.setAttribute("aria-pressed", String(snap2));
+      snapBtn?.classList.toggle("active", snap2);
+    };
+    grid.onStateChange(reflect);
+    reflect(grid.getState());
+    gridBtn?.addEventListener("click", () => grid.toggleVisible());
+    snapBtn?.addEventListener("click", () => grid.toggleSnap());
   }
   function wireToolbar(root) {
     const btns = root.querySelectorAll("#toolbar .tool");
@@ -2102,6 +2225,13 @@
       }
       if (mod && e.key.toLowerCase() === "g" && e.shiftKey) {
         ungroupSelection();
+        e.preventDefault();
+        return;
+      }
+      if (mod && (e.key === "'" || e.key === '"')) {
+        if (gridApi) {
+          e.shiftKey ? gridApi.toggleSnap() : gridApi.toggleVisible();
+        }
         e.preventDefault();
         return;
       }
@@ -2472,29 +2602,29 @@
   }
   function buildAttrs(node) {
     const attrs = [];
-    const emit = (k, v) => attrs.push(`${k}="${formatValue(k, v)}"`);
+    const emit2 = (k, v) => attrs.push(`${k}="${formatValue(k, v)}"`);
     for (const k of GEOMETRY_ATTRS) {
       if (!(k in node.attrs)) continue;
       const v = node.attrs[k];
       if (isDefault(k, v)) continue;
-      emit(k, v);
+      emit2(k, v);
     }
     for (const k of TEXT_ATTRS) {
       if (!(k in node.attrs)) continue;
       const v = node.attrs[k];
       if (isDefault(k, v)) continue;
-      emit(k, v);
+      emit2(k, v);
     }
     for (const k of PRESENTATION_ATTRS) {
       if (!(k in node.attrs)) continue;
       const v = node.attrs[k];
       if (isDefault(k, v)) continue;
-      emit(k, v);
+      emit2(k, v);
     }
     for (const [k, v] of Object.entries(node.attrs)) {
       if (GEOMETRY_ATTRS.includes(k) || TEXT_ATTRS.includes(k) || PRESENTATION_ATTRS.includes(k)) continue;
       if (isDefault(k, v)) continue;
-      emit(k, v);
+      emit2(k, v);
     }
     const tStr = transformString(node.transform);
     if (tStr) attrs.push(`transform="${tStr}"`);
@@ -2976,7 +3106,7 @@
   // js/layers.js
   var collapsed = /* @__PURE__ */ new Set();
   var listEl;
-  function mount4(root) {
+  function mount5(root) {
     listEl = root.querySelector("#layers-list");
     if (!listEl) return;
     listEl.addEventListener("click", onClick);
@@ -3113,7 +3243,7 @@
   __export(viewport_exports, {
     fit: () => fit,
     getZoomPercent: () => getZoomPercent,
-    mount: () => mount5,
+    mount: () => mount6,
     resetZoom: () => resetZoom,
     setZoomPercent: () => setZoomPercent,
     zoomInCentered: () => zoomInCentered,
@@ -3128,7 +3258,7 @@
   var onChange = null;
   var panning = null;
   var spaceDown = false;
-  function mount5(svgEl, changeCb) {
+  function mount6(svgEl, changeCb) {
     svg = svgEl;
     onChange = changeCb || null;
     applyViewBox();
@@ -3298,8 +3428,10 @@
   var svg2 = document.getElementById("canvas");
   mount(svg2);
   mount2(svg2);
-  mount3(document);
+  mount3(svg2);
+  mount4(document);
   mountViewport(viewport_exports, svg2);
+  mountGrid(grid_exports);
   mountPanel(
     document.getElementById("source"),
     document.getElementById("copy-btn"),
@@ -3307,7 +3439,7 @@
     document.getElementById("tight-mode")
   );
   mountImport(document);
-  mount4(document);
+  mount5(document);
   subscribe(() => {
     renderAll();
     refreshPropertyPanel();

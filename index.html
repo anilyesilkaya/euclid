@@ -30,13 +30,32 @@
 
     <main id="canvas-wrap">
       <svg id="canvas" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <!-- Document-space grid: minor cells tiled inside a major cell that also
+               draws the bold line. Scales with the viewBox (zoom) automatically. -->
+          <pattern id="grid-minor" width="10" height="10" patternUnits="userSpaceOnUse">
+            <path class="grid-minor-line" d="M10 0H0V10" fill="none"/>
+          </pattern>
+          <pattern id="grid-major" width="50" height="50" patternUnits="userSpaceOnUse">
+            <rect width="50" height="50" fill="url(#grid-minor)"/>
+            <path class="grid-major-line" d="M50 0H0V50" fill="none"/>
+          </pattern>
+        </defs>
         <g id="page-layer">
           <rect id="page" x="0" y="0" width="1000" height="700"/>
+          <rect id="grid-rect" x="0" y="0" width="1000" height="700" fill="url(#grid-major)" pointer-events="none"/>
         </g>
         <g id="doc-layer"></g>
         <g id="chrome-layer"></g>
       </svg>
       <div id="zoom-controls" aria-label="Zoom">
+        <button id="grid-toggle" type="button" class="toggle-btn" title="Show grid (Ctrl+&apos;)" aria-pressed="false">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M5.5 1v14M10.5 1v14M1 5.5h14M1 10.5h14" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
+        <button id="snap-toggle" type="button" class="toggle-btn" title="Snap to grid (Ctrl+Shift+&apos;)" aria-pressed="false">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M2 2h5v5H2zM9 9h5v5H9z" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M7 4.5h4.5V9" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="1.5 1.5"/></svg>
+        </button>
+        <span class="zoom-sep"></span>
         <button id="zoom-out" type="button" title="Zoom out (Ctrl -)">&minus;</button>
         <button id="zoom-readout" type="button" title="Reset to 100% (Ctrl+Shift+0)">100%</button>
         <button id="zoom-in" type="button" title="Zoom in (Ctrl +)">+</button>

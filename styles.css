@@ -86,6 +86,20 @@ html, body {
   filter: drop-shadow(0 4px 20px rgba(0,0,0,0.4));
 }
 
+/* Grid overlay. Lines use non-scaling stroke so they stay hairline-thin at any
+   zoom; visibility is toggled from grid.js via inline display. */
+#grid-rect { pointer-events: none; }
+.grid-minor-line {
+  stroke: #c9d3e0;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.grid-major-line {
+  stroke: #aab6c6;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
 /* Zoom controls, overlaid bottom-right of the canvas */
 #zoom-controls {
   position: absolute;
@@ -119,6 +133,18 @@ html, body {
 #zoom-readout {
   min-width: 48px !important;
   font-variant-numeric: tabular-nums;
+}
+/* Toggle buttons (grid, snap) sit in the same cluster; show a lit state when on. */
+#zoom-controls .toggle-btn.active {
+  color: var(--accent-2);
+  background: rgba(76, 154, 255, 0.18);
+}
+#zoom-controls .toggle-btn svg { display: block; }
+.zoom-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 2px;
+  background: var(--border);
 }
 
 /* Chrome layer visuals */

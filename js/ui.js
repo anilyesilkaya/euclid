@@ -13,6 +13,7 @@ const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", l: "line", p: "polylin
 let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity, pOpacityNum;
 let pText, pFontSize, pFontFamily, pTextColor, pRotation;
 let clipboard = null;
+let gridApi = null;   // set by mountGrid; used by keyboard shortcuts
 
 export function mount(root) {
   wireToolbar(root);
@@ -67,6 +68,27 @@ export function mountViewport(viewport, svg) {
 
   // Start framed to the world.
   viewport.fit();
+}
+
+// Wire the grid + snap toggle buttons to the grid module. Button pressed-state
+// mirrors the module's state via its change callback (also fires on mount so the
+// buttons reflect any persisted preference).
+export function mountGrid(grid) {
+  gridApi = grid;
+  const gridBtn = document.getElementById("grid-toggle");
+  const snapBtn = document.getElementById("snap-toggle");
+
+  const reflect = ({ visible, snap }) => {
+    gridBtn?.setAttribute("aria-pressed", String(visible));
+    gridBtn?.classList.toggle("active", visible);
+    snapBtn?.setAttribute("aria-pressed", String(snap));
+    snapBtn?.classList.toggle("active", snap);
+  };
+  grid.onStateChange(reflect);
+  reflect(grid.getState());
+
+  gridBtn?.addEventListener("click", () => grid.toggleVisible());
+  snapBtn?.addEventListener("click", () => grid.toggleSnap());
 }
 
 function wireToolbar(root) {
@@ -459,6 +481,11 @@ function wireKeyboard() {
     }
     if (mod && e.key.toLowerCase() === "g" && e.shiftKey) {
       ungroupSelection(); e.preventDefault(); return;
+    }
+    // Ctrl+'  toggles grid; Ctrl+Shift+'  toggles snap-to-grid.
+    if (mod && (e.key === "'" || e.key === '"')) {
+      if (gridApi) { e.shiftKey ? gridApi.toggleSnap() : gridApi.toggleVisible(); }
+      e.preventDefault(); return;
     }
 
     // Arrow nudge.

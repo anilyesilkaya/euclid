@@ -8,6 +8,7 @@ import {
 import * as history from "./history.js";
 import { toCanvasPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix } from "./render.js";
 import * as guides from "./guides.js";
+import * as grid from "./grid.js";
 
 const CANVAS_BBOX = { x: 0, y: 0, width: 1000, height: 700 };
 const SNAP_THRESHOLD = 6; // canvas units — feels right at default zoom
@@ -249,13 +250,14 @@ function startMove(p) {
 function updateMove(dx, dy, e) {
   const { ids, orig, movingUnion, stationaryBBoxes } = gesture;
 
-  // Hold Alt (or Option) to bypass snap while still showing raw drag.
+  // Hold Alt (or Option) to bypass snapping while still showing raw drag.
   let snapDx = 0, snapDy = 0;
   if (movingUnion && !e?.altKey) {
     const proposed = {
       x: movingUnion.x + dx, y: movingUnion.y + dy,
       width: movingUnion.width, height: movingUnion.height,
     };
+    // Smart object-alignment guides take precedence per axis.
     const snap = guides.computeSnap({
       movingBBox: proposed,
       stationaryBBoxes,
@@ -265,6 +267,12 @@ function updateMove(dx, dy, e) {
     snapDx = snap.dx;
     snapDy = snap.dy;
     guides.drawGuides(snap.guides);
+    // Grid snap fills in any axis a guide didn't already grab.
+    if (grid.isSnap()) {
+      const g = grid.snapDelta(proposed);
+      if (snapDx === 0) snapDx = g.dx;
+      if (snapDy === 0) snapDy = g.dy;
+    }
   } else {
     guides.clearGuides();
   }
@@ -352,6 +360,7 @@ function finishMarquee(g, additive) {
 // --- Draw (bbox-drag primitives) ---
 
 function startDraw(e, p) {
+  if (grid.isSnap() && !e.altKey) p = grid.snapPoint(p.x, p.y);
   const id = newId();
   const node = seedNodeFor(currentTool, id, p);
   if (!node) return;
@@ -380,6 +389,10 @@ function seedNodeFor(tool, id, p) {
 
 function updateDraw(p, e) {
   const { origin, id, tool } = gesture;
+  // Snap the live corner to the grid (origin was snapped at startDraw), so the
+  // shape's size lands on grid multiples. Alt bypasses. Shift-constraint below
+  // still applies on top of the snapped delta.
+  if (grid.isSnap() && !e.altKey) p = grid.snapPoint(p.x, p.y);
   let dx = p.x - origin.x;
   let dy = p.y - origin.y;
   if (e.shiftKey && (tool === "rect" || tool === "ellipse" || tool === "circle")) {
@@ -560,6 +573,9 @@ function cloneShape(node) {
 
 function updateResize(p, _e) {
   const { id, dir, origin, orig } = gesture;
+  // Snap the dragged handle to the grid so the resized edge lands on a grid line.
+  // Alt bypasses (matches move/draw).
+  if (grid.isSnap() && !_e?.altKey) p = grid.snapPoint(p.x, p.y);
   const dx = p.x - origin.x;
   const dy = p.y - origin.y;
   mutate((root) => {
