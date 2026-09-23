@@ -186,6 +186,26 @@ html, body {
   vector-effect: non-scaling-stroke;
   fill: none;
 }
+#chrome-layer .connector-preview {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+/* Fatten the invisible hit area of thin connectors so they're easy to click. */
+#doc-layer line[data-connector] {
+  stroke-linecap: round;
+}
+#chrome-layer .connector-selected {
+  fill: none;
+  stroke: var(--handle-stroke);
+  stroke-width: 3;
+  stroke-opacity: 0.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
 #chrome-layer .hover-outline {
   fill: none;
   stroke: var(--accent);

@@ -3,6 +3,7 @@
 // Event listeners are delegated on #canvas, so losing per-element refs is fine.
 
 import { getDoc, getSelection } from "./state.js";
+import { routeStraight } from "./connectors.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const HANDLE_SIZE = 8;      // px in screen space (via non-scaling stroke + fixed size)
@@ -65,9 +66,57 @@ export function renderAll() {
 function renderDoc() {
   while (docLayer.firstChild) docLayer.removeChild(docLayer.firstChild);
   const doc = getDoc();
+  // Pass 1: shapes/groups/text. Connectors are routed from their neighbours' live
+  // canvas boxes, so they can only be measured once the shapes are in the DOM.
+  const connectorNodes = [];
   for (const child of doc.children) {
+    if (child.type === "connector") { connectorNodes.push(child); continue; }
     docLayer.appendChild(nodeToElement(child));
   }
+  // Pass 2: connectors, now that every shape has a measurable box.
+  for (const node of connectorNodes) {
+    const el = connectorElement(node);
+    if (el) docLayer.appendChild(el);
+  }
+}
+
+// Resolve + build a connector's <line>. Returns null if it can't be routed
+// (e.g. an attached shape was deleted) so a broken edge simply doesn't draw.
+function connectorElement(node) {
+  const geom = resolveConnector(node);
+  if (!geom || !geom.valid) return null;
+  const line = document.createElementNS(SVG_NS, "line");
+  line.setAttribute("data-id", node.id);
+  line.setAttribute("data-connector", "1");
+  line.setAttribute("x1", round(geom.x1));
+  line.setAttribute("y1", round(geom.y1));
+  line.setAttribute("x2", round(geom.x2));
+  line.setAttribute("y2", round(geom.y2));
+  for (const [k, v] of Object.entries(node.attrs || {})) {
+    if (v === undefined || v === null || v === "") continue;
+    line.setAttribute(k, formatAttr(k, v));
+  }
+  if (node.arrowEnd) line.setAttribute("marker-end", "url(#arrow-end)");
+  if (node.arrowStart) line.setAttribute("marker-start", "url(#arrow-start)");
+  return line;
+}
+
+// Endpoint box lookup: an attached endpoint ({ref}) resolves to that shape's
+// current canvas-space AABB; a free endpoint ({x,y}) resolves to a point.
+export function resolveConnector(node) {
+  const end = (e) => {
+    if (e && e.ref != null) {
+      const el = docLayer.querySelector(`[data-id="${cssEscape(e.ref)}"]`);
+      if (!el) return { box: null, pt: null, missing: true };
+      const bb = elementBBoxInCanvas(el);
+      return bb ? { box: bb, pt: null } : { box: null, pt: null, missing: true };
+    }
+    return { box: null, pt: e ? { x: e.x, y: e.y } : null };
+  };
+  const a = end(node.from);
+  const b = end(node.to);
+  if (a.missing || b.missing) return { valid: false };
+  return routeStraight(a.box, b.box, a.pt, b.pt);
 }
 
 function nodeToElement(node) {
@@ -223,6 +272,13 @@ function renderSelection() {
   }
   if (boxes.length === 0) return;
 
+  // A lone selected connector gets a highlight overlay, not box/handles — its
+  // geometry is derived, so resize/rotate/move handles would be meaningless.
+  if (boxes.length === 1 && boxes[0].el.hasAttribute("data-connector")) {
+    drawConnectorSelection(boxes[0]);
+    return;
+  }
+
   // For a single selection: render tight rotated outline + 8 resize handles + rotate handle.
   // For multi-selection: render union AABB (in canvas space) + 8 resize handles, no rotate.
   if (boxes.length === 1) {
@@ -230,6 +286,16 @@ function renderSelection() {
   } else {
     drawMultiSelectionChrome(boxes);
   }
+}
+
+function drawConnectorSelection({ el }) {
+  const overlay = document.createElementNS(SVG_NS, "line");
+  overlay.setAttribute("class", "connector-selected");
+  overlay.setAttribute("x1", el.getAttribute("x1"));
+  overlay.setAttribute("y1", el.getAttribute("y1"));
+  overlay.setAttribute("x2", el.getAttribute("x2"));
+  overlay.setAttribute("y2", el.getAttribute("y2"));
+  chromeSelection.appendChild(overlay);
 }
 
 function drawSingleSelectionChrome({ id, el, box }) {

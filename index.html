@@ -20,6 +20,9 @@
       <button class="tool" data-tool="line" title="Line (L)">
         <svg viewBox="0 0 24 24" width="20" height="20"><line x1="4" y1="20" x2="20" y2="4" stroke="currentColor" stroke-width="2"/></svg>
       </button>
+      <button class="tool" data-tool="connector" title="Connector (X) — drag between shapes">
+        <svg viewBox="0 0 24 24" width="20" height="20"><rect x="2" y="4" width="6" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="16" y="15" width="6" height="5" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 6.5 H12 V17.5 H15.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M13 15l3 2.5-3 2.5z" fill="currentColor"/></svg>
+      </button>
       <button class="tool" data-tool="polyline" title="Polyline (P)">
         <svg viewBox="0 0 24 24" width="20" height="20"><polyline points="4,18 9,8 14,14 20,4" fill="none" stroke="currentColor" stroke-width="2"/></svg>
       </button>
@@ -40,6 +43,17 @@
             <rect width="50" height="50" fill="url(#grid-minor)"/>
             <path class="grid-major-line" d="M50 0H0V50" fill="none"/>
           </pattern>
+          <!-- Connector arrowheads. markerUnits=userSpaceOnUse keeps them a fixed
+               world size (not scaled by stroke width); context-stroke tints them to
+               match the connector's stroke. -->
+          <marker id="arrow-end" markerWidth="12" markerHeight="12" refX="9" refY="5"
+                  orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+            <path d="M0 0L10 5L0 10z" fill="context-stroke"/>
+          </marker>
+          <marker id="arrow-start" markerWidth="12" markerHeight="12" refX="9" refY="5"
+                  orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+            <path d="M0 0L10 5L0 10z" fill="context-stroke"/>
+          </marker>
         </defs>
         <g id="page-layer">
           <rect id="page" x="0" y="0" width="1000" height="700"/>

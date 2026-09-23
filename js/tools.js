@@ -9,6 +9,7 @@ import * as history from "./history.js";
 import { toCanvasPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix, setHoverOutline, clearHoverOutline } from "./render.js";
 import * as guides from "./guides.js";
 import * as grid from "./grid.js";
+import { routeStraight } from "./connectors.js";
 
 const CANVAS_BBOX = { x: 0, y: 0, width: 1000, height: 700 };
 const SNAP_THRESHOLD = 6; // canvas units — feels right at default zoom
@@ -34,6 +35,11 @@ const TEXT_DEFAULTS = {
   "font-family": "sans-serif",
   "font-size": 20,
   fill: "#000000",
+};
+const CONNECTOR_STYLE = {
+  fill: "none",
+  stroke: "#222222",
+  "stroke-width": 2,
 };
 
 let currentTool = "select";
@@ -87,6 +93,7 @@ function onPointerDown(e) {
   // Draw tools
   if (currentTool === "polyline") return handlePolylineDown(e, p);
   if (currentTool === "text") return handleTextDown(e, p);
+  if (currentTool === "connector") return startConnector(e, p, target);
   return startDraw(e, p);
 }
 
@@ -131,6 +138,8 @@ function onPointerMove(e) {
     updateRotate(p, e);
   } else if (gesture.type === "marquee") {
     updateMarquee(p);
+  } else if (gesture.type === "connector") {
+    updateConnector(p, e);
   }
 }
 
@@ -167,7 +176,14 @@ function onPointerUp(e) {
     finishDraw(g);
   } else if (g.type === "marquee") {
     finishMarquee(g, e.shiftKey);
-  } else if (g.type === "move" || g.type === "resize" || g.type === "rotate") {
+  } else if (g.type === "connector") {
+    finishConnector(g, e);
+  } else if (g.type === "move") {
+    // Commit only a real move that touched at least one movable node (a
+    // connector-only selection has an empty moving set — nothing to record).
+    if (g.moved && g.ids.length > 0) history.commit(g.type);
+    else history.abort();
+  } else if (g.type === "resize" || g.type === "rotate") {
     if (g.moved) history.commit(g.type);
     else history.abort();
   }
@@ -309,7 +325,9 @@ function computeMovePayload(g) {
   const movingTopIds = new Set();
   for (const id of getSelection()) {
     const top = topAncestor(doc, id);
-    if (top) movingTopIds.add(top.id);
+    // Connectors have derived geometry (no transform) — they can't be dragged;
+    // they follow whatever shapes they attach to. Skip them from the moving set.
+    if (top && top.type !== "connector") movingTopIds.add(top.id);
   }
 
   const orig = new Map();
@@ -558,6 +576,103 @@ function isEmptyShape(node, tool) {
   if (tool === "line") return node.attrs.x1 === node.attrs.x2 && node.attrs.y1 === node.attrs.y2;
   if (tool === "polyline") return !node.attrs.points || node.attrs.points.length < 2;
   return false;
+}
+
+// --- Connector (drag between shapes) ---
+//
+// Endpoints attach to whatever top-level shape sits under the pointer; drop over
+// empty canvas to pin a free point. Geometry is never stored — the connector node
+// holds only endpoint refs (or free points) + style, and render/export re-route it
+// from the live shape boxes, so it follows the shapes on move/resize/rotate.
+
+function startConnector(e, p, target) {
+  const hit = hitTest(target);
+  const fromId = hit ? pickSelectionId(hit.id) : null;
+  gesture = {
+    type: "connector",
+    origin: p, last: p, moved: false,
+    from: fromId ? { ref: fromId } : { x: p.x, y: p.y },
+    fromAnchor: fromId ? anchorOfShape(fromId) : { x: p.x, y: p.y },
+    toId: null,
+  };
+  // Preview line on the transient layer.
+  const line = document.createElementNS(SVG_NS, "line");
+  line.setAttribute("class", "connector-preview");
+  gesture.previewEl = line;
+  getTransientLayer().appendChild(line);
+  updateConnectorPreview(p);
+}
+
+function updateConnector(p, e) {
+  const hit = hitTest(e.target);
+  let toId = hit ? pickSelectionId(hit.id) : null;
+  // Don't allow attaching both ends to the same shape (a self-loop we can't route).
+  if (toId && gesture.from.ref === toId) toId = null;
+  gesture.toId = toId;
+  highlightConnectTarget(toId);
+  updateConnectorPreview(p);
+}
+
+function updateConnectorPreview(p) {
+  const fromBox = gesture.from.ref ? shapeBox(gesture.from.ref) : null;
+  const toBox = gesture.toId ? shapeBox(gesture.toId) : null;
+  const fromPt = gesture.from.ref ? null : { x: gesture.from.x, y: gesture.from.y };
+  const toPt = { x: p.x, y: p.y };
+  const g = routeStraight(fromBox, toBox, fromPt, toPt);
+  if (!g.valid) return;
+  const line = gesture.previewEl;
+  line.setAttribute("x1", g.x1); line.setAttribute("y1", g.y1);
+  line.setAttribute("x2", g.x2); line.setAttribute("y2", g.y2);
+}
+
+function finishConnector(g, e) {
+  clearConnectTargetHighlight();
+  const hit = hitTest(e.target);
+  let toId = hit ? pickSelectionId(hit.id) : null;
+  if (toId && g.from.ref === toId) toId = null;
+
+  // A connector needs at least one attached endpoint AND a non-trivial length —
+  // otherwise a stray click on empty canvas would create a zero-length edge.
+  const dist = Math.hypot(g.last.x - g.origin.x, g.last.y - g.origin.y);
+  const hasAttachment = !!g.from.ref || !!toId;
+  if (!hasAttachment || (dist < 4 && !toId)) return;
+
+  const to = toId ? { ref: toId } : { x: round2(g.last.x), y: round2(g.last.y) };
+  const from = g.from.ref ? { ref: g.from.ref } : { x: round2(g.from.x), y: round2(g.from.y) };
+
+  const id = newId("c");
+  const node = {
+    id, type: "connector",
+    from, to,
+    arrowEnd: true,
+    attrs: { ...CONNECTOR_STYLE },
+  };
+  history.record(() => {
+    mutate((root) => { root.children.push(node); });
+  });
+  setSelection([id]);
+}
+
+// Canvas-space AABB of a top-level shape by id (null if unmeasurable).
+function shapeBox(id) {
+  const el = getDocLayer().querySelector(`[data-id="${cssEscape(id)}"]`);
+  if (!el) return null;
+  const b = elementBBoxInCanvas(el);
+  return b ? { x: b.x1, y: b.y1, width: b.x2 - b.x1, height: b.y2 - b.y1 } : null;
+}
+
+function anchorOfShape(id) {
+  const b = shapeBox(id);
+  return b ? { x: b.x + b.width / 2, y: b.y + b.height / 2 } : { x: 0, y: 0 };
+}
+
+// Outline the shape the "to" end would attach to, as drag feedback.
+function highlightConnectTarget(id) {
+  clearConnectTargetHighlight();
+  if (id) setHoverOutline(id);
+}
+function clearConnectTargetHighlight() {
+  clearHoverOutline();
 }
 
 // --- Polyline (click-based) ---
@@ -818,6 +933,8 @@ function clearTransient() {
 function cssEscape(s) {
   return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, c => `\\${c}`);
 }
+
+function round2(n) { return Math.round(n * 100) / 100; }
 
 // --- Text tool ---
 

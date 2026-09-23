@@ -8,7 +8,7 @@ import * as history from "./history.js";
 import { setTool, getTool, cancelPolyline, isTextEditing, openLabelEditor } from "./tools.js";
 import { align } from "./align.js";
 
-const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", l: "line", p: "polyline", t: "text" };
+const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", l: "line", p: "polyline", t: "text", x: "connector" };
 
 let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity, pOpacityNum;
 let pText, pFontSize, pFontFamily, pTextColor, pRotation;
@@ -513,7 +513,21 @@ function deleteSelection() {
   const ids = new Set(getSelection());
   if (ids.size === 0) return;
   history.record(() => {
-    mutate((root) => { removeByIds(root, ids); });
+    mutate((root) => {
+      removeByIds(root, ids);
+      // Cascade: drop connectors whose endpoints referenced a deleted shape, so
+      // no dangling edges linger in the model.
+      const alive = new Set();
+      walk(root, (n) => alive.add(n.id));
+      const orphaned = new Set();
+      walk(root, (n) => {
+        if (n.type !== "connector") return;
+        const fromDead = n.from?.ref != null && !alive.has(n.from.ref);
+        const toDead = n.to?.ref != null && !alive.has(n.to.ref);
+        if (fromDead || toDead) orphaned.add(n.id);
+      });
+      if (orphaned.size) removeByIds(root, orphaned);
+    });
   });
   clearSelection();
 }

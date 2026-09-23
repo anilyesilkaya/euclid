@@ -117,6 +117,33 @@
     return removed;
   }
 
+  // js/connectors.js
+  function borderPoint(box, tx, ty) {
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const hw = box.width / 2;
+    const hh = box.height / 2;
+    const dx = tx - cx;
+    const dy = ty - cy;
+    if (dx === 0 && dy === 0 || hw === 0 && hh === 0) return { x: cx, y: cy };
+    const sx = hw > 0 ? hw / Math.abs(dx) : Infinity;
+    const sy = hh > 0 ? hh / Math.abs(dy) : Infinity;
+    const s = Math.min(sx, sy);
+    return { x: cx + dx * s, y: cy + dy * s };
+  }
+  function centerOf(box) {
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  }
+  function routeStraight(fromBox, toBox, fromPt, toPt) {
+    const fromCenter = fromBox ? centerOf(fromBox) : fromPt;
+    const toCenter = toBox ? centerOf(toBox) : toPt;
+    if (!fromCenter || !toCenter) return { valid: false };
+    const from = fromBox ? borderPoint(fromBox, toCenter.x, toCenter.y) : fromPt;
+    const to = toBox ? borderPoint(toBox, fromCenter.x, fromCenter.y) : toPt;
+    if (!from || !to) return { valid: false };
+    return { x1: from.x, y1: from.y, x2: to.x, y2: to.y, valid: true };
+  }
+
   // js/render.js
   var SVG_NS = "http://www.w3.org/2000/svg";
   var HANDLE_SIZE = 8;
@@ -176,9 +203,51 @@
   function renderDoc() {
     while (docLayer.firstChild) docLayer.removeChild(docLayer.firstChild);
     const doc2 = getDoc();
+    const connectorNodes = [];
     for (const child of doc2.children) {
+      if (child.type === "connector") {
+        connectorNodes.push(child);
+        continue;
+      }
       docLayer.appendChild(nodeToElement(child));
     }
+    for (const node of connectorNodes) {
+      const el = connectorElement(node);
+      if (el) docLayer.appendChild(el);
+    }
+  }
+  function connectorElement(node) {
+    const geom = resolveConnector(node);
+    if (!geom || !geom.valid) return null;
+    const line = document.createElementNS(SVG_NS, "line");
+    line.setAttribute("data-id", node.id);
+    line.setAttribute("data-connector", "1");
+    line.setAttribute("x1", round(geom.x1));
+    line.setAttribute("y1", round(geom.y1));
+    line.setAttribute("x2", round(geom.x2));
+    line.setAttribute("y2", round(geom.y2));
+    for (const [k, v] of Object.entries(node.attrs || {})) {
+      if (v === void 0 || v === null || v === "") continue;
+      line.setAttribute(k, formatAttr(k, v));
+    }
+    if (node.arrowEnd) line.setAttribute("marker-end", "url(#arrow-end)");
+    if (node.arrowStart) line.setAttribute("marker-start", "url(#arrow-start)");
+    return line;
+  }
+  function resolveConnector(node) {
+    const end = (e) => {
+      if (e && e.ref != null) {
+        const el = docLayer.querySelector(`[data-id="${cssEscape(e.ref)}"]`);
+        if (!el) return { box: null, pt: null, missing: true };
+        const bb = elementBBoxInCanvas(el);
+        return bb ? { box: bb, pt: null } : { box: null, pt: null, missing: true };
+      }
+      return { box: null, pt: e ? { x: e.x, y: e.y } : null };
+    };
+    const a = end(node.from);
+    const b = end(node.to);
+    if (a.missing || b.missing) return { valid: false };
+    return routeStraight(a.box, b.box, a.pt, b.pt);
   }
   function nodeToElement(node) {
     if (node.type === "group") {
@@ -315,11 +384,24 @@
       boxes.push({ id, el, box: safeBBox(el) });
     }
     if (boxes.length === 0) return;
+    if (boxes.length === 1 && boxes[0].el.hasAttribute("data-connector")) {
+      drawConnectorSelection(boxes[0]);
+      return;
+    }
     if (boxes.length === 1) {
       drawSingleSelectionChrome(boxes[0]);
     } else {
       drawMultiSelectionChrome(boxes);
     }
+  }
+  function drawConnectorSelection({ el }) {
+    const overlay = document.createElementNS(SVG_NS, "line");
+    overlay.setAttribute("class", "connector-selected");
+    overlay.setAttribute("x1", el.getAttribute("x1"));
+    overlay.setAttribute("y1", el.getAttribute("y1"));
+    overlay.setAttribute("x2", el.getAttribute("x2"));
+    overlay.setAttribute("y2", el.getAttribute("y2"));
+    chromeSelection.appendChild(overlay);
   }
   function drawSingleSelectionChrome({ id, el, box }) {
     const wrap = document.createElementNS(SVG_NS, "g");
@@ -802,6 +884,11 @@
     "font-size": 20,
     fill: "#000000"
   };
+  var CONNECTOR_STYLE = {
+    fill: "none",
+    stroke: "#222222",
+    "stroke-width": 2
+  };
   var currentTool = "select";
   var canvasSvg2;
   var polylineInProgress = null;
@@ -841,6 +928,7 @@
     if (currentTool === "select") return handleSelectDown(e, p, target);
     if (currentTool === "polyline") return handlePolylineDown(e, p);
     if (currentTool === "text") return handleTextDown(e, p);
+    if (currentTool === "connector") return startConnector(e, p, target);
     return startDraw(e, p);
   }
   function onPointerMove(e) {
@@ -876,6 +964,8 @@
       updateRotate(p, e);
     } else if (gesture.type === "marquee") {
       updateMarquee(p);
+    } else if (gesture.type === "connector") {
+      updateConnector(p, e);
     }
   }
   function updateHover(e) {
@@ -912,7 +1002,12 @@
       finishDraw(g);
     } else if (g.type === "marquee") {
       finishMarquee(g, e.shiftKey);
-    } else if (g.type === "move" || g.type === "resize" || g.type === "rotate") {
+    } else if (g.type === "connector") {
+      finishConnector(g, e);
+    } else if (g.type === "move") {
+      if (g.moved && g.ids.length > 0) commit(g.type);
+      else abort();
+    } else if (g.type === "resize" || g.type === "rotate") {
       if (g.moved) commit(g.type);
       else abort();
     }
@@ -1035,7 +1130,7 @@
     const movingTopIds = /* @__PURE__ */ new Set();
     for (const id of getSelection()) {
       const top = topAncestor(doc2, id);
-      if (top) movingTopIds.add(top.id);
+      if (top && top.type !== "connector") movingTopIds.add(top.id);
     }
     const orig = /* @__PURE__ */ new Map();
     const movingBBoxes = [];
@@ -1262,6 +1357,88 @@
     if (tool === "line") return node.attrs.x1 === node.attrs.x2 && node.attrs.y1 === node.attrs.y2;
     if (tool === "polyline") return !node.attrs.points || node.attrs.points.length < 2;
     return false;
+  }
+  function startConnector(e, p, target) {
+    const hit = hitTest(target);
+    const fromId = hit ? pickSelectionId(hit.id) : null;
+    gesture = {
+      type: "connector",
+      origin: p,
+      last: p,
+      moved: false,
+      from: fromId ? { ref: fromId } : { x: p.x, y: p.y },
+      fromAnchor: fromId ? anchorOfShape(fromId) : { x: p.x, y: p.y },
+      toId: null
+    };
+    const line = document.createElementNS(SVG_NS3, "line");
+    line.setAttribute("class", "connector-preview");
+    gesture.previewEl = line;
+    getTransientLayer().appendChild(line);
+    updateConnectorPreview(p);
+  }
+  function updateConnector(p, e) {
+    const hit = hitTest(e.target);
+    let toId = hit ? pickSelectionId(hit.id) : null;
+    if (toId && gesture.from.ref === toId) toId = null;
+    gesture.toId = toId;
+    highlightConnectTarget(toId);
+    updateConnectorPreview(p);
+  }
+  function updateConnectorPreview(p) {
+    const fromBox = gesture.from.ref ? shapeBox(gesture.from.ref) : null;
+    const toBox = gesture.toId ? shapeBox(gesture.toId) : null;
+    const fromPt = gesture.from.ref ? null : { x: gesture.from.x, y: gesture.from.y };
+    const toPt = { x: p.x, y: p.y };
+    const g = routeStraight(fromBox, toBox, fromPt, toPt);
+    if (!g.valid) return;
+    const line = gesture.previewEl;
+    line.setAttribute("x1", g.x1);
+    line.setAttribute("y1", g.y1);
+    line.setAttribute("x2", g.x2);
+    line.setAttribute("y2", g.y2);
+  }
+  function finishConnector(g, e) {
+    clearConnectTargetHighlight();
+    const hit = hitTest(e.target);
+    let toId = hit ? pickSelectionId(hit.id) : null;
+    if (toId && g.from.ref === toId) toId = null;
+    const dist = Math.hypot(g.last.x - g.origin.x, g.last.y - g.origin.y);
+    const hasAttachment = !!g.from.ref || !!toId;
+    if (!hasAttachment || dist < 4 && !toId) return;
+    const to = toId ? { ref: toId } : { x: round2(g.last.x), y: round2(g.last.y) };
+    const from = g.from.ref ? { ref: g.from.ref } : { x: round2(g.from.x), y: round2(g.from.y) };
+    const id = newId("c");
+    const node = {
+      id,
+      type: "connector",
+      from,
+      to,
+      arrowEnd: true,
+      attrs: { ...CONNECTOR_STYLE }
+    };
+    record(() => {
+      mutate((root) => {
+        root.children.push(node);
+      });
+    });
+    setSelection([id]);
+  }
+  function shapeBox(id) {
+    const el = getDocLayer().querySelector(`[data-id="${cssEscape2(id)}"]`);
+    if (!el) return null;
+    const b = elementBBoxInCanvas(el);
+    return b ? { x: b.x1, y: b.y1, width: b.x2 - b.x1, height: b.y2 - b.y1 } : null;
+  }
+  function anchorOfShape(id) {
+    const b = shapeBox(id);
+    return b ? { x: b.x + b.width / 2, y: b.y + b.height / 2 } : { x: 0, y: 0 };
+  }
+  function highlightConnectTarget(id) {
+    clearConnectTargetHighlight();
+    if (id) setHoverOutline(id);
+  }
+  function clearConnectTargetHighlight() {
+    clearHoverOutline();
   }
   function handlePolylineDown(e, p) {
     if (!polylineInProgress) {
@@ -1518,6 +1695,9 @@
   }
   function cssEscape2(s) {
     return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
+  }
+  function round2(n) {
+    return Math.round(n * 100) / 100;
   }
   function handleTextDown(e, p) {
     const id = newId("t");
@@ -1903,7 +2083,7 @@
   }
 
   // js/ui.js
-  var TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", l: "line", p: "polyline", t: "text" };
+  var TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", l: "line", p: "polyline", t: "text", x: "connector" };
   var propsEmpty;
   var propsForm;
   var pFill;
@@ -2213,7 +2393,7 @@
     pStroke.value = normalizeColor(stroke, "#222222");
     pStrokeWidth.value = sw;
     pOpacity.value = op;
-    pOpacityNum.value = round2(op);
+    pOpacityNum.value = round22(op);
     const firstSel = findNode(doc2, ids[0]);
     const rot = firstSel?.transform?.rot || 0;
     if (document.activeElement !== pRotation) pRotation.value = normalizeAngle(rot) ?? 0;
@@ -2242,7 +2422,7 @@
     }
     return null;
   }
-  function round2(n) {
+  function round22(n) {
     return Math.round(Number(n) * 100) / 100;
   }
   function normalizeAngle(raw) {
@@ -2372,6 +2552,16 @@
     record(() => {
       mutate((root) => {
         removeByIds(root, ids);
+        const alive = /* @__PURE__ */ new Set();
+        walk(root, (n) => alive.add(n.id));
+        const orphaned = /* @__PURE__ */ new Set();
+        walk(root, (n) => {
+          if (n.type !== "connector") return;
+          const fromDead = n.from?.ref != null && !alive.has(n.from.ref);
+          const toDead = n.to?.ref != null && !alive.has(n.to.ref);
+          if (fromDead || toDead) orphaned.add(n.id);
+        });
+        if (orphaned.size) removeByIds(root, orphaned);
       });
     });
     clearSelection();
@@ -2576,11 +2766,27 @@
       `<?xml version="1.0" encoding="UTF-8"?>`,
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbStr}">`
     ];
+    lines.push(...arrowDefs(doc2));
     for (const child of doc2.children) {
       lines.push(...emitNode(child, 1));
     }
     lines.push(`</svg>`);
     return lines.join("\n") + "\n";
+  }
+  function arrowDefs(doc2) {
+    const needsEnd = doc2.children.some((c) => c.type === "connector" && c.arrowEnd);
+    const needsStart = doc2.children.some((c) => c.type === "connector" && c.arrowStart);
+    if (!needsEnd && !needsStart) return [];
+    const out = [`${INDENT}<defs>`];
+    const marker = (id) => [
+      `${INDENT}${INDENT}<marker id="${id}" markerWidth="12" markerHeight="12" refX="9" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse">`,
+      `${INDENT}${INDENT}${INDENT}<path d="M0 0L10 5L0 10z" fill="context-stroke"/>`,
+      `${INDENT}${INDENT}</marker>`
+    ];
+    if (needsEnd) out.push(...marker("arrow-end"));
+    if (needsStart) out.push(...marker("arrow-start"));
+    out.push(`${INDENT}</defs>`);
+    return out;
   }
   function setTightMode(on) {
     tightMode = !!on;
@@ -2610,6 +2816,25 @@
   }
   function emitNode(node, depth) {
     const pad = INDENT.repeat(depth);
+    if (node.type === "connector") {
+      const g = resolveConnector(node);
+      if (!g || !g.valid) return [];
+      const parts = [
+        `x1="${round3(g.x1)}"`,
+        `y1="${round3(g.y1)}"`,
+        `x2="${round3(g.x2)}"`,
+        `y2="${round3(g.y2)}"`
+      ];
+      for (const k of PRESENTATION_ATTRS) {
+        if (!(k in (node.attrs || {}))) continue;
+        const v = node.attrs[k];
+        if (isDefault(k, v)) continue;
+        parts.push(`${k}="${formatValue(k, v)}"`);
+      }
+      if (node.arrowEnd) parts.push(`marker-end="url(#arrow-end)"`);
+      if (node.arrowStart) parts.push(`marker-start="url(#arrow-start)"`);
+      return [`${pad}<line ${parts.join(" ")}/>`];
+    }
     const attrs = buildAttrs(node);
     const attrStr = attrs.length ? " " + attrs.join(" ") : "";
     if (node.type === "group") {
@@ -3285,6 +3510,8 @@
         return s(`<ellipse cx="7" cy="7" rx="5.5" ry="3.5" ${stroke}/>`);
       case "line":
         return s(`<line x1="2" y1="11" x2="12" y2="3" ${stroke}/>`);
+      case "connector":
+        return s(`<line x1="2" y1="11" x2="10" y2="3" ${stroke}/><path d="M8,1.5 12,3 10.5,6.5z" fill="currentColor"/>`);
       case "polyline":
         return s(`<polyline points="2,10 5,5 9,8 12,3" ${stroke}/>`);
       case "path":
