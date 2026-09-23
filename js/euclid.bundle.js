@@ -1688,6 +1688,7 @@
   var pStrokeNone;
   var pStrokeWidth;
   var pOpacity;
+  var pOpacityNum;
   var pText;
   var pFontSize;
   var pFontFamily;
@@ -1732,6 +1733,7 @@
     pStrokeNone = root.querySelector("#p-stroke-none");
     pStrokeWidth = root.querySelector("#p-stroke-width");
     pOpacity = root.querySelector("#p-opacity");
+    pOpacityNum = root.querySelector("#p-opacity-num");
     pText = root.querySelector("#p-text");
     pFontSize = root.querySelector("#p-font-size");
     pFontFamily = root.querySelector("#p-font-family");
@@ -1744,11 +1746,31 @@
     pStrokeNone.addEventListener("change", () => historyRecord(() => applyToSelection("stroke", pStrokeNone.checked ? "none" : pStroke.value)));
     pStrokeWidth.addEventListener("input", () => applyToSelection("stroke-width", Number(pStrokeWidth.value)));
     pStrokeWidth.addEventListener("change", () => historyCommitAfter(() => applyToSelection("stroke-width", Number(pStrokeWidth.value))));
-    pOpacity.addEventListener("input", () => applyToSelection("opacity", Number(pOpacity.value)));
+    pOpacity.addEventListener("input", () => {
+      pOpacityNum.value = pOpacity.value;
+      applyToSelection("opacity", Number(pOpacity.value));
+    });
     pOpacity.addEventListener("change", () => historyCommitAfter(() => applyToSelection("opacity", Number(pOpacity.value))));
+    pOpacityNum.addEventListener("input", () => {
+      const v = clampOpacity(pOpacityNum.value);
+      if (v === null) return;
+      pOpacity.value = v;
+      applyToSelection("opacity", v);
+    });
+    pOpacityNum.addEventListener("change", () => {
+      const v = clampOpacity(pOpacityNum.value);
+      if (v === null) {
+        pOpacityNum.value = pOpacity.value;
+        return;
+      }
+      pOpacityNum.value = v;
+      pOpacity.value = v;
+      historyCommitAfter(() => applyToSelection("opacity", v));
+    });
     for (const input of [pFill, pStroke, pStrokeWidth, pOpacity, pTextColor]) {
       input.addEventListener("pointerdown", () => beginTransaction());
     }
+    pOpacityNum.addEventListener("focus", () => beginTransaction());
     pText.addEventListener("input", () => applyTextContent(pText.value));
     pText.addEventListener("change", () => historyCommitAfter(() => applyTextContent(pText.value)));
     pText.addEventListener("pointerdown", () => beginTransaction());
@@ -1885,6 +1907,7 @@
     pStroke.value = normalizeColor(stroke, "#222222");
     pStrokeWidth.value = sw;
     pOpacity.value = op;
+    pOpacityNum.value = round2(op);
     const firstId = [...getSelection()][0];
     const firstNode = firstId ? findNode(doc2, firstId) : null;
     if (!firstNode) return;
@@ -1909,6 +1932,15 @@
       if (s) return s;
     }
     return null;
+  }
+  function round2(n) {
+    return Math.round(Number(n) * 100) / 100;
+  }
+  function clampOpacity(raw) {
+    if (raw === "" || raw === null || raw === void 0) return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    return Math.max(0, Math.min(1, n));
   }
   function normalizeColor(v, fallback) {
     if (typeof v !== "string") return fallback;
@@ -2215,7 +2247,7 @@
   function serialize() {
     const doc2 = getDoc();
     const vb2 = tightMode ? computeTightViewBox() : DEFAULT_VIEWBOX;
-    const vbStr = `${round2(vb2.x)} ${round2(vb2.y)} ${round2(vb2.width)} ${round2(vb2.height)}`;
+    const vbStr = `${round3(vb2.x)} ${round3(vb2.y)} ${round3(vb2.width)} ${round3(vb2.height)}`;
     const lines = [
       `<?xml version="1.0" encoding="UTF-8"?>`,
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbStr}">`
@@ -2395,12 +2427,12 @@
   }
   function formatValue(k, v) {
     if (k === "points" && Array.isArray(v)) {
-      return v.map((p) => `${round2(p[0])},${round2(p[1])}`).join(" ");
+      return v.map((p) => `${round3(p[0])},${round3(p[1])}`).join(" ");
     }
-    if (typeof v === "number") return String(round2(v));
+    if (typeof v === "number") return String(round3(v));
     return escapeXml(String(v));
   }
-  function round2(n) {
+  function round3(n) {
     if (typeof n !== "number") return n;
     if (Math.abs(n) < 1e-9) return 0;
     return Math.round(n * 1e3) / 1e3;
@@ -2411,8 +2443,8 @@
   function transformString(t) {
     if (!t) return "";
     const parts = [];
-    if (t.tx || t.ty) parts.push(`translate(${round2(t.tx)},${round2(t.ty)})`);
-    if (t.rot) parts.push(`rotate(${round2(t.rot)},${round2(t.cx)},${round2(t.cy)})`);
+    if (t.tx || t.ty) parts.push(`translate(${round3(t.tx)},${round3(t.ty)})`);
+    if (t.rot) parts.push(`rotate(${round3(t.rot)},${round3(t.cx)},${round3(t.cy)})`);
     return parts.join(" ");
   }
   var sourcePanel;

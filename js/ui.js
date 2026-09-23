@@ -10,7 +10,7 @@ import { align } from "./align.js";
 
 const TOOL_KEYS = { v: "select", r: "rect", c: "circle", e: "ellipse", l: "line", p: "polyline", t: "text" };
 
-let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity;
+let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity, pOpacityNum;
 let pText, pFontSize, pFontFamily, pTextColor;
 let clipboard = null;
 
@@ -63,6 +63,7 @@ function wireProperties(root) {
   pStrokeNone = root.querySelector("#p-stroke-none");
   pStrokeWidth = root.querySelector("#p-stroke-width");
   pOpacity = root.querySelector("#p-opacity");
+  pOpacityNum = root.querySelector("#p-opacity-num");
   pText = root.querySelector("#p-text");
   pFontSize = root.querySelector("#p-font-size");
   pFontFamily = root.querySelector("#p-font-family");
@@ -76,13 +77,31 @@ function wireProperties(root) {
   pStrokeNone.addEventListener("change", () => historyRecord(() => applyToSelection("stroke", pStrokeNone.checked ? "none" : pStroke.value)));
   pStrokeWidth.addEventListener("input", () => applyToSelection("stroke-width", Number(pStrokeWidth.value)));
   pStrokeWidth.addEventListener("change", () => historyCommitAfter(() => applyToSelection("stroke-width", Number(pStrokeWidth.value))));
-  pOpacity.addEventListener("input", () => applyToSelection("opacity", Number(pOpacity.value)));
+  pOpacity.addEventListener("input", () => {
+    pOpacityNum.value = pOpacity.value;
+    applyToSelection("opacity", Number(pOpacity.value));
+  });
   pOpacity.addEventListener("change", () => historyCommitAfter(() => applyToSelection("opacity", Number(pOpacity.value))));
+  pOpacityNum.addEventListener("input", () => {
+    const v = clampOpacity(pOpacityNum.value);
+    if (v === null) return; // mid-typing / invalid — wait
+    pOpacity.value = v;
+    applyToSelection("opacity", v);
+  });
+  pOpacityNum.addEventListener("change", () => {
+    const v = clampOpacity(pOpacityNum.value);
+    if (v === null) { pOpacityNum.value = pOpacity.value; return; } // revert bad entry
+    pOpacityNum.value = v;
+    pOpacity.value = v;
+    historyCommitAfter(() => applyToSelection("opacity", v));
+  });
 
   // On mousedown of a slider/color, open a transaction so the drag becomes one history entry.
   for (const input of [pFill, pStroke, pStrokeWidth, pOpacity, pTextColor]) {
     input.addEventListener("pointerdown", () => history.beginTransaction());
   }
+  // The opacity number box commits as a single entry per edit (focus → change).
+  pOpacityNum.addEventListener("focus", () => history.beginTransaction());
 
   // Text content: for text nodes writes .text; for other nodes writes .label.
   pText.addEventListener("input", () => applyTextContent(pText.value));
@@ -241,6 +260,7 @@ export function refreshPropertyPanel() {
   pStroke.value = normalizeColor(stroke, "#222222");
   pStrokeWidth.value = sw;
   pOpacity.value = op;
+  pOpacityNum.value = round2(op);
 
   // Text fields — read from the first selected node.
   const firstId = [...getSelection()][0];
@@ -268,6 +288,17 @@ function firstShape(node) {
     if (s) return s;
   }
   return null;
+}
+
+// Parse the opacity number box → a clamped 0..1 number, or null if not yet a
+// valid number (empty / mid-typing) so callers can hold off applying.
+function round2(n) { return Math.round(Number(n) * 100) / 100; }
+
+function clampOpacity(raw) {
+  if (raw === "" || raw === null || raw === undefined) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(1, n));
 }
 
 function normalizeColor(v, fallback) {
