@@ -7,11 +7,13 @@ import * as ui from "./ui.js";
 import * as exp from "./export.js";
 import * as importer from "./import.js";
 import * as layers from "./layers.js";
+import * as viewport from "./viewport.js";
 
 const svg = document.getElementById("canvas");
 render.mount(svg);
 tools.mount(svg);
 ui.mount(document);
+ui.mountViewport(viewport, svg);
 exp.mountPanel(
   document.getElementById("source"),
   document.getElementById("copy-btn"),

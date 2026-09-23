@@ -14,10 +14,7 @@
       <button class="tool" data-tool="rect" title="Rectangle (R)">
         <svg viewBox="0 0 24 24" width="20" height="20"><rect x="4" y="6" width="16" height="12" fill="none" stroke="currentColor" stroke-width="2"/></svg>
       </button>
-      <button class="tool" data-tool="circle" title="Circle (C)">
-        <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-      </button>
-      <button class="tool" data-tool="ellipse" title="Ellipse (E)">
+      <button class="tool" data-tool="ellipse" title="Ellipse (E) — hold Shift for a circle">
         <svg viewBox="0 0 24 24" width="20" height="20"><ellipse cx="12" cy="12" rx="9" ry="6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
       </button>
       <button class="tool" data-tool="line" title="Line (L)">
@@ -33,9 +30,18 @@
 
     <main id="canvas-wrap">
       <svg id="canvas" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet">
+        <g id="page-layer">
+          <rect id="page" x="0" y="0" width="1000" height="700"/>
+        </g>
         <g id="doc-layer"></g>
         <g id="chrome-layer"></g>
       </svg>
+      <div id="zoom-controls" aria-label="Zoom">
+        <button id="zoom-out" type="button" title="Zoom out (Ctrl -)">&minus;</button>
+        <button id="zoom-readout" type="button" title="Reset to 100% (Ctrl+Shift+0)">100%</button>
+        <button id="zoom-in" type="button" title="Zoom in (Ctrl +)">+</button>
+        <button id="zoom-fit" type="button" title="Fit to view (Ctrl 0)">Fit</button>
+      </div>
     </main>
 
     <aside id="side">
@@ -48,7 +54,13 @@
           <label>Stroke <input type="color" id="p-stroke"></label>
           <label class="chk"><input type="checkbox" id="p-stroke-none"> None</label>
           <label>Stroke width <input type="number" id="p-stroke-width" min="0" step="0.5"></label>
-          <label>Opacity <input type="range" id="p-opacity" min="0" max="1" step="0.01"></label>
+          <label>Opacity
+            <span class="opacity-group">
+              <input type="range" id="p-opacity" min="0" max="1" step="0.01">
+              <input type="number" id="p-opacity-num" min="0" max="1" step="0.01">
+            </span>
+          </label>
+          <label>Rotation <input type="number" id="p-rotation" step="1"></label>
           <div class="props-divider">Text</div>
           <label class="wide">Content <input type="text" id="p-text" placeholder="(shape label or text)"></label>
           <label>Font size <input type="number" id="p-font-size" min="1" step="1"></label>
@@ -92,14 +104,20 @@
 
       <section id="layers-section" aria-label="Layers">
         <div class="layers-head">
-          <h2>Layers</h2>
+          <button type="button" class="section-toggle" data-section="layers" aria-expanded="true">
+            <svg class="section-caret" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="section-title">Layers</span>
+          </button>
         </div>
         <div id="layers-list" role="tree" tabindex="0"></div>
       </section>
 
-      <section id="source-section" aria-label="SVG source">
+      <section id="source-section" class="collapsed" aria-label="SVG source">
         <div class="source-head">
-          <h2>SVG source</h2>
+          <button type="button" class="section-toggle" data-section="source" aria-expanded="false">
+            <svg class="section-caret" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="section-title">SVG source</span>
+          </button>
           <div class="source-btns">
             <label class="tight-toggle" title="Crop viewBox tight to content (8-unit padding)">
               <input type="checkbox" id="tight-mode"> Tight

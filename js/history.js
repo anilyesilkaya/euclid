@@ -18,6 +18,13 @@ export function beginTransaction() {
   pending = snapshot();
 }
 
+// Begin a transaction only if none is open. For inputs that fire many `input`
+// events then a `change`: the first `input` opens the transaction, `change`
+// commits it, and a subsequent edit in the same focus session opens a fresh one.
+export function ensureTransaction() {
+  if (pending === null) pending = snapshot();
+}
+
 export function commit(_label) {
   if (pending === null) return;
   past.push(pending);

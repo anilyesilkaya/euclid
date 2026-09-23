@@ -61,24 +61,65 @@ html, body {
 
 /* Canvas */
 #canvas-wrap {
+  position: relative;
   background: #14161a;
-  display: grid;
-  place-items: center;
-  padding: 24px;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 #canvas {
   width: 100%;
   height: 100%;
-  max-width: 100%;
-  max-height: 100%;
-  background: #ffffff;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  display: block;
+  background: #14161a;
   cursor: default;
   user-select: none;
+  touch-action: none; /* we handle wheel/pan ourselves */
 }
 #canvas.draw-mode { cursor: crosshair; }
+#canvas.space-pan { cursor: grab; }
+#canvas.panning { cursor: grabbing; }
+
+/* The white "page" — the 1000x700 world the document lives in. */
+#page {
+  fill: #ffffff;
+  filter: drop-shadow(0 4px 20px rgba(0,0,0,0.4));
+}
+
+/* Zoom controls, overlaid bottom-right of the canvas */
+#zoom-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  z-index: 5;
+  user-select: none;
+}
+#zoom-controls button {
+  min-width: 30px;
+  height: 26px;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 0;
+  border-radius: 5px;
+  font-size: 13px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+#zoom-controls button:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+#zoom-controls button:active { background: rgba(255,255,255,0.1); }
+#zoom-readout {
+  min-width: 48px !important;
+  font-variant-numeric: tabular-nums;
+}
 
 /* Chrome layer visuals */
 #chrome-layer .selection-outline {
@@ -154,10 +195,16 @@ html, body {
   background: var(--panel);
   border-left: 1px solid var(--border);
   display: grid;
+  /* Rows: props (auto) · layers-section · source-section.
+     Collapsed sections collapse to their header (auto); the combo classes
+     below pick the row template. Default: source collapsed. */
   grid-template-rows: auto minmax(120px, 1fr) minmax(120px, 1fr);
   min-width: 0;
   min-height: 0;
 }
+#side.layers-collapsed:not(.source-collapsed) { grid-template-rows: auto auto minmax(120px, 1fr); }
+#side:not(.layers-collapsed).source-collapsed { grid-template-rows: auto minmax(120px, 1fr) auto; }
+#side.layers-collapsed.source-collapsed       { grid-template-rows: auto auto auto; }
 #side h2 {
   font-size: 11px;
   font-weight: 600;
@@ -166,6 +213,36 @@ html, body {
   color: var(--text-dim);
   margin: 0 0 8px 0;
 }
+
+/* Collapsible section headers */
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.section-toggle:hover { color: var(--text); }
+.section-caret {
+  flex: 0 0 auto;
+  transition: transform 100ms;
+}
+.section-toggle[aria-expanded="false"] .section-caret { transform: rotate(-90deg); }
+
+/* Hide the body of a collapsed section; keep its header row visible. */
+#layers-section.collapsed #layers-list,
+#source-section.collapsed #source { display: none; }
+#layers-section.collapsed,
+#source-section.collapsed { grid-template-rows: auto; }
 
 /* Property panel */
 #props {
@@ -202,7 +279,20 @@ html, body {
   width: 70px; background: var(--panel-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px;
 }
-#props-form input[type="range"] { width: 130px; }
+#props-form input[type="range"] { width: 92px; }
+.opacity-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.opacity-group input[type="number"] {
+  width: 52px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
 #props-form label.wide { grid-template-columns: auto 1fr; }
 #props-form label.wide input[type="text"] {
   width: 100%; background: var(--panel-2); color: var(--text);
