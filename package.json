@@ -1,0 +1,15 @@
+{
+  "name": "euclid",
+  "version": "1.0.0",
+  "description": "A tiny, zero-dependency SVG editor that runs in the browser.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild js/main.js --bundle --format=iife --outfile=js/euclid.bundle.js",
+    "watch": "esbuild js/main.js --bundle --format=iife --outfile=js/euclid.bundle.js --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
