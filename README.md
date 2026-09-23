@@ -1,4 +1,4 @@
-# svg-canvas
+# Euclid
 
 A tiny, zero-dependency SVG editor that runs in the browser. Draw primitives, arrange them, edit properties, and copy or download the clean SVG source — no build step, no framework, no server-side anything.
 
