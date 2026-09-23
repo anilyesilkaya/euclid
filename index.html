@@ -33,9 +33,18 @@
 
     <main id="canvas-wrap">
       <svg id="canvas" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet">
+        <g id="page-layer">
+          <rect id="page" x="0" y="0" width="1000" height="700"/>
+        </g>
         <g id="doc-layer"></g>
         <g id="chrome-layer"></g>
       </svg>
+      <div id="zoom-controls" aria-label="Zoom">
+        <button id="zoom-out" type="button" title="Zoom out (Ctrl -)">&minus;</button>
+        <button id="zoom-readout" type="button" title="Reset to 100% (Ctrl+Shift+0)">100%</button>
+        <button id="zoom-in" type="button" title="Zoom in (Ctrl +)">+</button>
+        <button id="zoom-fit" type="button" title="Fit to view (Ctrl 0)">Fit</button>
+      </div>
     </main>
 
     <aside id="side">

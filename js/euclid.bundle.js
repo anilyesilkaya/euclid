@@ -1,4 +1,10 @@
 (() => {
+  var __defProp = Object.defineProperty;
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+
   // js/state.js
   var subscribers = /* @__PURE__ */ new Set();
   var doc = makeRoot();
@@ -119,10 +125,10 @@
   var chromeSelection;
   var chromeTransient;
   var canvasSvg;
-  function mount(svg2) {
-    canvasSvg = svg2;
-    docLayer = svg2.querySelector("#doc-layer");
-    const chrome = svg2.querySelector("#chrome-layer");
+  function mount(svg3) {
+    canvasSvg = svg3;
+    docLayer = svg3.querySelector("#doc-layer");
+    const chrome = svg3.querySelector("#chrome-layer");
     chromeSelection = document.createElementNS(SVG_NS, "g");
     chromeSelection.setAttribute("id", "chrome-selection");
     chromeTransient = document.createElementNS(SVG_NS, "g");
@@ -669,13 +675,13 @@
   var canvasSvg2;
   var polylineInProgress = null;
   var gesture = null;
-  function mount2(svg2) {
-    canvasSvg2 = svg2;
-    svg2.addEventListener("pointerdown", onPointerDown);
-    svg2.addEventListener("pointermove", onPointerMove);
+  function mount2(svg3) {
+    canvasSvg2 = svg3;
+    svg3.addEventListener("pointerdown", onPointerDown);
+    svg3.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
-    svg2.addEventListener("dblclick", onDoubleClick);
-    svg2.addEventListener("contextmenu", onContextMenu);
+    svg3.addEventListener("dblclick", onDoubleClick);
+    svg3.addEventListener("contextmenu", onContextMenu);
   }
   function setTool(name) {
     if (currentTool === name) return;
@@ -1178,45 +1184,45 @@
       return { x: nx, y: ny, w: nw, h: nh };
     };
     if (n.type === "rect") {
-      const r2 = applyBox(orig.attrs.x, orig.attrs.y, orig.attrs.width, orig.attrs.height);
-      n.attrs.x = r2.x;
-      n.attrs.y = r2.y;
-      n.attrs.width = r2.w;
-      n.attrs.height = r2.h;
+      const r3 = applyBox(orig.attrs.x, orig.attrs.y, orig.attrs.width, orig.attrs.height);
+      n.attrs.x = r3.x;
+      n.attrs.y = r3.y;
+      n.attrs.width = r3.w;
+      n.attrs.height = r3.h;
     } else if (n.type === "ellipse") {
       const bx = orig.attrs.cx - orig.attrs.rx;
       const by = orig.attrs.cy - orig.attrs.ry;
       const bw = orig.attrs.rx * 2;
       const bh = orig.attrs.ry * 2;
-      const r2 = applyBox(bx, by, bw, bh);
-      n.attrs.cx = r2.x + r2.w / 2;
-      n.attrs.cy = r2.y + r2.h / 2;
-      n.attrs.rx = r2.w / 2;
-      n.attrs.ry = r2.h / 2;
+      const r3 = applyBox(bx, by, bw, bh);
+      n.attrs.cx = r3.x + r3.w / 2;
+      n.attrs.cy = r3.y + r3.h / 2;
+      n.attrs.rx = r3.w / 2;
+      n.attrs.ry = r3.h / 2;
     } else if (n.type === "circle") {
       const bx = orig.attrs.cx - orig.attrs.r;
       const by = orig.attrs.cy - orig.attrs.r;
       const bw = orig.attrs.r * 2;
       const bh = orig.attrs.r * 2;
-      const r2 = applyBox(bx, by, bw, bh);
-      const side = Math.min(r2.w, r2.h);
-      n.attrs.cx = r2.x + r2.w / 2;
-      n.attrs.cy = r2.y + r2.h / 2;
+      const r3 = applyBox(bx, by, bw, bh);
+      const side = Math.min(r3.w, r3.h);
+      n.attrs.cx = r3.x + r3.w / 2;
+      n.attrs.cy = r3.y + r3.h / 2;
       n.attrs.r = side / 2;
     } else if (n.type === "line") {
       const bx = Math.min(orig.attrs.x1, orig.attrs.x2);
       const by = Math.min(orig.attrs.y1, orig.attrs.y2);
       const bw = Math.abs(orig.attrs.x2 - orig.attrs.x1);
       const bh = Math.abs(orig.attrs.y2 - orig.attrs.y1);
-      const r2 = applyBox(bx, by, bw, bh);
+      const r3 = applyBox(bx, by, bw, bh);
       const sx = bw ? (orig.attrs.x1 - bx) / bw : 0;
       const sy = bh ? (orig.attrs.y1 - by) / bh : 0;
       const ex = bw ? (orig.attrs.x2 - bx) / bw : 0;
       const ey = bh ? (orig.attrs.y2 - by) / bh : 0;
-      n.attrs.x1 = r2.x + sx * r2.w;
-      n.attrs.y1 = r2.y + sy * r2.h;
-      n.attrs.x2 = r2.x + ex * r2.w;
-      n.attrs.y2 = r2.y + ey * r2.h;
+      n.attrs.x1 = r3.x + sx * r3.w;
+      n.attrs.y1 = r3.y + sy * r3.h;
+      n.attrs.x2 = r3.x + ex * r3.w;
+      n.attrs.y2 = r3.y + ey * r3.h;
     } else if (n.type === "polyline" || n.type === "group") {
       const pts = orig.attrs.points;
       if (!pts) return;
@@ -1228,10 +1234,10 @@
         if (y > maxY) maxY = y;
       }
       const bw = maxX - minX, bh = maxY - minY;
-      const r2 = applyBox(minX, minY, bw, bh);
-      const sx = bw ? r2.w / bw : 1;
-      const sy = bh ? r2.h / bh : 1;
-      n.attrs.points = pts.map(([x, y]) => [r2.x + (x - minX) * sx, r2.y + (y - minY) * sy]);
+      const r3 = applyBox(minX, minY, bw, bh);
+      const sx = bw ? r3.w / bw : 1;
+      const sy = bh ? r3.h / bh : 1;
+      n.attrs.points = pts.map(([x, y]) => [r3.x + (x - minX) * sx, r3.y + (y - minY) * sy]);
     }
   }
   function startRotate(e, handleEl, p) {
@@ -1273,8 +1279,8 @@
     });
   }
   function localToCanvasPoint(el, x, y) {
-    const svg2 = canvasSvg2;
-    const pt = svg2.createSVGPoint();
+    const svg3 = canvasSvg2;
+    const pt = svg3.createSVGPoint();
     pt.x = x;
     pt.y = y;
     const M = localToCanvasMatrix(el);
@@ -1361,11 +1367,11 @@
     }, 0);
   }
   function positionForTextNode(node) {
-    const svg2 = canvasSvg2;
-    const pt = svg2.createSVGPoint();
+    const svg3 = canvasSvg2;
+    const pt = svg3.createSVGPoint();
     pt.x = node.attrs.x;
     pt.y = node.attrs.y;
-    const ctm = svg2.getScreenCTM();
+    const ctm = svg3.getScreenCTM();
     const screen = pt.matrixTransform(ctm);
     const size = node.attrs["font-size"] || 20;
     const screenSize = size * ctm.a;
@@ -1378,8 +1384,8 @@
     };
   }
   function positionForLabel(node) {
-    const svg2 = canvasSvg2;
-    const ctm = svg2.getScreenCTM();
+    const svg3 = canvasSvg2;
+    const ctm = svg3.getScreenCTM();
     const style = node.labelStyle || {};
     const size = style["font-size"] || 16;
     const screenSize = size * (ctm?.a || 1);
@@ -1392,13 +1398,13 @@
     };
     const labelDom = getDocLayer().querySelector(`text[data-role="label"][data-owner="${cssEscape2(node.id)}"]`);
     if (labelDom) {
-      const r2 = labelDom.getBoundingClientRect();
-      return { ...base, left: `${r2.left + r2.width / 2}px`, top: `${r2.top + r2.height / 2}px` };
+      const r3 = labelDom.getBoundingClientRect();
+      return { ...base, left: `${r3.left + r3.width / 2}px`, top: `${r3.top + r3.height / 2}px` };
     }
     const shapeDom = getDocLayer().querySelector(`[data-id="${cssEscape2(node.id)}"]`);
     if (shapeDom) {
-      const r2 = shapeDom.getBoundingClientRect();
-      return { ...base, left: `${r2.left + r2.width / 2}px`, top: `${r2.top + r2.height / 2}px` };
+      const r3 = shapeDom.getBoundingClientRect();
+      return { ...base, left: `${r3.left + r3.width / 2}px`, top: `${r3.top + r3.height / 2}px` };
     }
     return { ...base, left: `50%`, top: `50%` };
   }
@@ -1491,9 +1497,9 @@
     }
     document.body.appendChild(menu);
     const { innerWidth: vw, innerHeight: vh } = window;
-    const r2 = menu.getBoundingClientRect();
-    const left = Math.min(clientX, vw - r2.width - 4);
-    const top = Math.min(clientY, vh - r2.height - 4);
+    const r3 = menu.getBoundingClientRect();
+    const left = Math.min(clientX, vw - r3.width - 4);
+    const top = Math.min(clientY, vh - r3.height - 4);
     menu.style.left = `${Math.max(0, left)}px`;
     menu.style.top = `${Math.max(0, top)}px`;
     ctxMenuEl = menu;
@@ -1693,6 +1699,18 @@
     wireKeyboard();
     document.addEventListener("tool-changed", (e) => reflectToolInUI(e.detail));
     reflectToolInUI(getTool());
+  }
+  function mountViewport(viewport, svg3) {
+    const readout = document.getElementById("zoom-readout");
+    viewport.mount(svg3, (_scale) => {
+      if (readout) readout.textContent = `${viewport.getZoomPercent()}%`;
+    });
+    const byId = (id) => document.getElementById(id);
+    byId("zoom-in")?.addEventListener("click", () => viewport.zoomInCentered());
+    byId("zoom-out")?.addEventListener("click", () => viewport.zoomOutCentered());
+    byId("zoom-fit")?.addEventListener("click", () => viewport.fit());
+    readout?.addEventListener("click", () => viewport.resetZoom());
+    viewport.fit();
   }
   function wireToolbar(root) {
     const btns = root.querySelectorAll("#toolbar .tool");
@@ -2196,8 +2214,8 @@
   };
   function serialize() {
     const doc2 = getDoc();
-    const vb = tightMode ? computeTightViewBox() : DEFAULT_VIEWBOX;
-    const vbStr = `${round2(vb.x)} ${round2(vb.y)} ${round2(vb.width)} ${round2(vb.height)}`;
+    const vb2 = tightMode ? computeTightViewBox() : DEFAULT_VIEWBOX;
+    const vbStr = `${round2(vb2.x)} ${round2(vb2.y)} ${round2(vb2.width)} ${round2(vb2.height)}`;
     const lines = [
       `<?xml version="1.0" encoding="UTF-8"?>`,
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbStr}">`
@@ -2978,11 +2996,198 @@
     refresh();
   }
 
+  // js/viewport.js
+  var viewport_exports = {};
+  __export(viewport_exports, {
+    fit: () => fit,
+    getZoomPercent: () => getZoomPercent,
+    mount: () => mount5,
+    resetZoom: () => resetZoom,
+    setZoomPercent: () => setZoomPercent,
+    zoomInCentered: () => zoomInCentered,
+    zoomOutCentered: () => zoomOutCentered
+  });
+  var WORLD = { x: 0, y: 0, width: 1e3, height: 700 };
+  var MIN_SCALE = 0.1;
+  var MAX_SCALE = 16;
+  var ZOOM_STEP = 1.2;
+  var svg;
+  var vb = { ...WORLD };
+  var onChange = null;
+  var panning = null;
+  var spaceDown = false;
+  function mount5(svgEl, changeCb) {
+    svg = svgEl;
+    onChange = changeCb || null;
+    applyViewBox();
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    svg.addEventListener("pointerdown", onPointerDownCapture, true);
+    window.addEventListener("pointermove", onPointerMove2);
+    window.addEventListener("pointerup", onPointerUpCapture, true);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+  }
+  function applyViewBox() {
+    svg.setAttribute("viewBox", `${r2(vb.x)} ${r2(vb.y)} ${r2(vb.width)} ${r2(vb.height)}`);
+    if (onChange) onChange(getScale());
+  }
+  function getScale() {
+    const rect = svg.getBoundingClientRect();
+    return rect.width > 0 && vb.width > 0 ? rect.width / vb.width : 1;
+  }
+  function getZoomPercent() {
+    return Math.round(getScale() * 100);
+  }
+  function zoomAtWorld(wx, wy, factor) {
+    const curScale = getScale();
+    let targetScale = clamp(curScale * factor, MIN_SCALE, MAX_SCALE);
+    if (targetScale === curScale) return;
+    const rect = svg.getBoundingClientRect();
+    const newW = rect.width / targetScale;
+    const newH = rect.height / targetScale;
+    const fx = (wx - vb.x) / vb.width;
+    const fy = (wy - vb.y) / vb.height;
+    vb = { x: wx - fx * newW, y: wy - fy * newH, width: newW, height: newH };
+    applyViewBox();
+  }
+  function clientToWorld(clientX, clientY) {
+    const rect = svg.getBoundingClientRect();
+    const fx = (clientX - rect.left) / rect.width;
+    const fy = (clientY - rect.top) / rect.height;
+    return { x: vb.x + fx * vb.width, y: vb.y + fy * vb.height };
+  }
+  function onWheel(e) {
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey) {
+      const w = clientToWorld(e.clientX, e.clientY);
+      const factor = Math.pow(ZOOM_STEP, -e.deltaY / 100);
+      zoomAtWorld(w.x, w.y, factor);
+    } else {
+      const scale = getScale();
+      let dx = e.deltaX, dy = e.deltaY;
+      if (e.shiftKey && dx === 0) {
+        dx = dy;
+        dy = 0;
+      }
+      vb = { ...vb, x: vb.x + dx / scale, y: vb.y + dy / scale };
+      applyViewBox();
+    }
+  }
+  function onPointerDownCapture(e) {
+    const isMiddle = e.button === 1;
+    const isSpaceLeft = e.button === 0 && spaceDown;
+    if (!isMiddle && !isSpaceLeft) return;
+    e.preventDefault();
+    e.stopPropagation();
+    panning = { startClientX: e.clientX, startClientY: e.clientY, startVb: { ...vb } };
+    svg.classList.add("panning");
+    try {
+      svg.setPointerCapture(e.pointerId);
+    } catch {
+    }
+  }
+  function onPointerMove2(e) {
+    if (!panning) return;
+    const scale = getScale();
+    const dx = (e.clientX - panning.startClientX) / scale;
+    const dy = (e.clientY - panning.startClientY) / scale;
+    vb = { ...vb, x: panning.startVb.x - dx, y: panning.startVb.y - dy };
+    applyViewBox();
+  }
+  function onPointerUpCapture(e) {
+    if (!panning) return;
+    panning = null;
+    svg.classList.remove("panning");
+    e.stopPropagation();
+  }
+  function onKeyDown(e) {
+    if (e.code === "Space" && !isEditable(e.target)) {
+      spaceDown = true;
+      svg.classList.add("space-pan");
+    }
+    const mod = e.ctrlKey || e.metaKey;
+    if (!mod) return;
+    if (e.key === "0") {
+      e.preventDefault();
+      fit();
+    } else if (e.key === ")" || e.shiftKey && e.key === "0") {
+      e.preventDefault();
+      resetZoom();
+    } else if (e.key === "=" || e.key === "+") {
+      e.preventDefault();
+      zoomInCentered();
+    } else if (e.key === "-" || e.key === "_") {
+      e.preventDefault();
+      zoomOutCentered();
+    }
+  }
+  function onKeyUp(e) {
+    if (e.code === "Space") {
+      spaceDown = false;
+      svg.classList.remove("space-pan");
+    }
+  }
+  function isEditable(el) {
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+  }
+  function centerWorld() {
+    return { x: vb.x + vb.width / 2, y: vb.y + vb.height / 2 };
+  }
+  function zoomInCentered() {
+    const c = centerWorld();
+    zoomAtWorld(c.x, c.y, ZOOM_STEP);
+  }
+  function zoomOutCentered() {
+    const c = centerWorld();
+    zoomAtWorld(c.x, c.y, 1 / ZOOM_STEP);
+  }
+  function resetZoom() {
+    const rect = svg.getBoundingClientRect();
+    const c = centerWorld();
+    const newW = rect.width, newH = rect.height;
+    vb = { x: c.x - newW / 2, y: c.y - newH / 2, width: newW, height: newH };
+    applyViewBox();
+  }
+  function fit() {
+    const rect = svg.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      vb = { ...WORLD };
+      return applyViewBox();
+    }
+    const margin = 0.06;
+    const worldAR = WORLD.width / WORLD.height;
+    const viewAR = rect.width / rect.height;
+    let w, h;
+    if (viewAR > worldAR) {
+      h = WORLD.height * (1 + margin * 2);
+      w = h * viewAR;
+    } else {
+      w = WORLD.width * (1 + margin * 2);
+      h = w / viewAR;
+    }
+    vb = { x: WORLD.x + WORLD.width / 2 - w / 2, y: WORLD.y + WORLD.height / 2 - h / 2, width: w, height: h };
+    applyViewBox();
+  }
+  function setZoomPercent(pct) {
+    const target = clamp(pct / 100, MIN_SCALE, MAX_SCALE);
+    const c = centerWorld();
+    zoomAtWorld(c.x, c.y, target / getScale());
+  }
+  function clamp(v, lo, hi) {
+    return Math.max(lo, Math.min(hi, v));
+  }
+  function r2(n) {
+    return Math.abs(n) < 1e-9 ? 0 : Math.round(n * 1e3) / 1e3;
+  }
+
   // js/main.js
-  var svg = document.getElementById("canvas");
-  mount(svg);
-  mount2(svg);
+  var svg2 = document.getElementById("canvas");
+  mount(svg2);
+  mount2(svg2);
   mount3(document);
+  mountViewport(viewport_exports, svg2);
   mountPanel(
     document.getElementById("source"),
     document.getElementById("copy-btn"),

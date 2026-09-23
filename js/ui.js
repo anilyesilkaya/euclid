@@ -22,6 +22,25 @@ export function mount(root) {
   reflectToolInUI(getTool());
 }
 
+// Wire the zoom controls to the viewport module. The readout updates via the
+// change callback the viewport fires on every view change.
+export function mountViewport(viewport, svg) {
+  const readout = document.getElementById("zoom-readout");
+  viewport.mount(svg, (_scale) => {
+    if (readout) readout.textContent = `${viewport.getZoomPercent()}%`;
+  });
+
+  const byId = (id) => document.getElementById(id);
+  byId("zoom-in")?.addEventListener("click", () => viewport.zoomInCentered());
+  byId("zoom-out")?.addEventListener("click", () => viewport.zoomOutCentered());
+  byId("zoom-fit")?.addEventListener("click", () => viewport.fit());
+  // Click the percentage to reset to 100%.
+  readout?.addEventListener("click", () => viewport.resetZoom());
+
+  // Start framed to the world.
+  viewport.fit();
+}
+
 function wireToolbar(root) {
   const btns = root.querySelectorAll("#toolbar .tool");
   for (const b of btns) {
