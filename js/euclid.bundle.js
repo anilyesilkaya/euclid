@@ -2251,7 +2251,7 @@
   }
 
   // js/ui.js
-  var TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", l: "line", p: "polyline", t: "text", x: "connector" };
+  var TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", t: "text", x: "connector" };
   var propsEmpty;
   var propsForm;
   var pFill;

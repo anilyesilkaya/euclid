@@ -77,8 +77,9 @@ save/open format with debounced autosave.
   (rx / ry), font weight / style, text alignment. Export / import already
   preserve these attrs; this is mostly property-panel wiring in `ui.js` +
   `index.html`.
-- **M9 — Circle tool.** Add the missing toolbar button + `TOOL_KEYS` binding;
-  the `circle` type is already handled in draw / resize / render / import.
+- **M9 — Circle tool.** ✅ **Done.** Added the toolbar button (Circle (C),
+  hold Shift for a perfect circle) + `TOOL_KEYS` `c` binding; the `circle`
+  type was already handled in draw / resize / render / import.
 
 ---
 

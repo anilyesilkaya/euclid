@@ -9,7 +9,7 @@ import { setTool, getTool, cancelPolyline, isTextEditing, openLabelEditor } from
 import { align } from "./align.js";
 import * as persist from "./persist.js";
 
-const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", l: "line", p: "polyline", t: "text", x: "connector" };
+const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", t: "text", x: "connector" };
 
 let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity, pOpacityNum;
 let pText, pFontSize, pFontFamily, pTextColor, pRotation;
