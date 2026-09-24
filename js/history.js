@@ -68,3 +68,11 @@ export function redo() {
 
 export function canUndo() { return past.length > 0; }
 export function canRedo() { return future.length > 0; }
+
+// Wipe the undo/redo rings. Used when loading a new document (Open / autosave
+// restore) so the user can't Ctrl+Z back into the previously-loaded document.
+export function resetHistory() {
+  past.length = 0;
+  future.length = 0;
+  pending = null;
+}

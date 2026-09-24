@@ -603,6 +603,11 @@
     replaceRoot(next);
     return true;
   }
+  function resetHistory() {
+    past.length = 0;
+    future.length = 0;
+    pending = null;
+  }
 
   // js/guides.js
   var SVG_NS2 = "http://www.w3.org/2000/svg";
@@ -2082,6 +2087,128 @@
     return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
   }
 
+  // js/persist.js
+  var FORMAT_VERSION = 1;
+  var AUTOSAVE_KEY = "euclid.doc.autosave";
+  var AUTOSAVE_DEBOUNCE = 400;
+  var LoadError = class extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "LoadError";
+    }
+  };
+  var fileInput = null;
+  var autosaveTimer = null;
+  function serializeDocument(pretty = false) {
+    const payload = { version: FORMAT_VERSION, doc: getDoc() };
+    return pretty ? JSON.stringify(payload, null, 2) : JSON.stringify(payload);
+  }
+  function parseDocument(text) {
+    let payload;
+    try {
+      payload = JSON.parse(String(text ?? ""));
+    } catch {
+      throw new LoadError("Not a valid Euclid file (could not parse JSON).");
+    }
+    if (!payload || typeof payload !== "object") {
+      throw new LoadError("Not a valid Euclid file (unexpected structure).");
+    }
+    const version = payload.version;
+    if (typeof version !== "number" || !Number.isFinite(version)) {
+      throw new LoadError("Not a valid Euclid file (missing version).");
+    }
+    if (version > FORMAT_VERSION) {
+      throw new LoadError(
+        `This file was made by a newer version of Euclid (format v${version}). This build understands up to v${FORMAT_VERSION}.`
+      );
+    }
+    const root = payload.doc;
+    if (!root || typeof root !== "object" || root.id !== "root" || root.type !== "group" || !Array.isArray(root.children)) {
+      throw new LoadError("Not a valid Euclid file (missing document root).");
+    }
+    normalize(root);
+    return root;
+  }
+  function normalize(root) {
+    walk(root, (n) => {
+      if (typeof n !== "object" || n === null) return;
+      if (n.attrs == null || typeof n.attrs !== "object") n.attrs = {};
+      if (n.transform == null && n.type !== "connector") n.transform = emptyTransform();
+      if (n.children != null && !Array.isArray(n.children)) n.children = [];
+    });
+  }
+  function loadDocument(root) {
+    replaceRoot(root);
+    clearSelection();
+    resetHistory();
+  }
+  function saveToFile() {
+    const text = serializeDocument(true);
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "drawing.euclid.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1e3);
+  }
+  function triggerOpen() {
+    if (fileInput) fileInput.click();
+  }
+  function openFromFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        loadDocument(parseDocument(reader.result));
+      } catch (err) {
+        const msg = err instanceof LoadError ? err.message : "Could not open this file.";
+        alert(msg);
+      }
+    };
+    reader.onerror = () => alert("Could not read this file.");
+    reader.readAsText(file);
+  }
+  function writeAutosave() {
+    try {
+      window.localStorage.setItem(AUTOSAVE_KEY, serializeDocument(false));
+    } catch {
+    }
+  }
+  function scheduleAutosave() {
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(writeAutosave, AUTOSAVE_DEBOUNCE);
+  }
+  function restoreAutosave() {
+    let text = null;
+    try {
+      text = window.localStorage.getItem(AUTOSAVE_KEY);
+    } catch {
+      return;
+    }
+    if (!text) return;
+    try {
+      loadDocument(parseDocument(text));
+    } catch {
+    }
+  }
+  function mount4(root) {
+    const saveBtn = root.querySelector("#save-btn");
+    const openBtn2 = root.querySelector("#open-btn");
+    fileInput = root.querySelector("#open-file");
+    if (saveBtn) saveBtn.addEventListener("click", saveToFile);
+    if (openBtn2) openBtn2.addEventListener("click", triggerOpen);
+    if (fileInput) {
+      fileInput.addEventListener("change", () => {
+        const file = fileInput.files && fileInput.files[0];
+        openFromFile(file);
+        fileInput.value = "";
+      });
+    }
+  }
+
   // js/ui.js
   var TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", l: "line", p: "polyline", t: "text", x: "connector" };
   var propsEmpty;
@@ -2100,7 +2227,7 @@
   var pRotation;
   var clipboard = null;
   var gridApi = null;
-  function mount4(root) {
+  function mount5(root) {
     wireToolbar(root);
     wireProperties(root);
     wireKeyboard();
@@ -2519,6 +2646,16 @@
       }
       if (mod && e.key.toLowerCase() === "g" && e.shiftKey) {
         ungroupSelection();
+        e.preventDefault();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "s") {
+        saveToFile();
+        e.preventDefault();
+        return;
+      }
+      if (mod && e.key.toLowerCase() === "o") {
+        triggerOpen();
         e.preventDefault();
         return;
       }
@@ -3445,7 +3582,7 @@
   // js/layers.js
   var collapsed = /* @__PURE__ */ new Set();
   var listEl;
-  function mount5(root) {
+  function mount6(root) {
     listEl = root.querySelector("#layers-list");
     if (!listEl) return;
     listEl.addEventListener("click", onClick);
@@ -3584,7 +3721,7 @@
   __export(viewport_exports, {
     fit: () => fit,
     getZoomPercent: () => getZoomPercent,
-    mount: () => mount6,
+    mount: () => mount7,
     resetZoom: () => resetZoom,
     setZoomPercent: () => setZoomPercent,
     zoomInCentered: () => zoomInCentered,
@@ -3599,7 +3736,7 @@
   var onChange = null;
   var panning = null;
   var spaceDown = false;
-  function mount6(svgEl, changeCb) {
+  function mount7(svgEl, changeCb) {
     svg = svgEl;
     onChange = changeCb || null;
     applyViewBox();
@@ -3770,7 +3907,7 @@
   mount(svg2);
   mount2(svg2);
   mount3(svg2);
-  mount4(document);
+  mount5(document);
   mountViewport(viewport_exports, svg2);
   mountGrid(grid_exports);
   mountPanel(
@@ -3780,12 +3917,15 @@
     document.getElementById("tight-mode")
   );
   mountImport(document);
-  mount5(document);
+  mount6(document);
+  mount4(document);
+  restoreAutosave();
   subscribe(() => {
     renderAll();
     refreshPropertyPanel();
     refreshSourcePanel();
     refresh();
+    scheduleAutosave();
   });
   renderAll();
   refreshPropertyPanel();

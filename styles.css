@@ -625,9 +625,11 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-bottom: 8px;
 }
-.source-btns { display: flex; gap: 6px; align-items: center; }
+.source-btns { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; }
 .tight-toggle {
   display: inline-flex;
   align-items: center;
