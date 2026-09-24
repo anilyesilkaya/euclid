@@ -63,6 +63,8 @@ fetched over `file://`, the modular sources themselves need a static server — 
 
 While drawing: hold `Shift` to constrain rect/ellipse to a square/circle, or a line to 45° increments. While moving: hold `Alt` to bypass snapping (both smart guides and grid). Ctrl+drag a selection to duplicate it as you move.
 
+While rotating: a live angle readout follows the handle; hold `Shift` to snap to 22.5° increments, or `Shift`+`Ctrl` for 1° fine steps.
+
 Zoom with Ctrl/⌘+wheel (at the cursor); pan with a two-finger scroll, middle-mouse drag, or `Space`+drag.
 
 ## Import support
