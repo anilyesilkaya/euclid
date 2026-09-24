@@ -4,16 +4,19 @@ A tiny, zero-dependency SVG editor that runs in the browser. Draw primitives, ar
 
 ## Features
 
-- **Shapes** — rectangle, circle, ellipse, line, polyline, and text
+- **Shapes** — rectangle, ellipse (hold `Shift` for a circle), line, polyline, and text
+- **Connectors** — draw an edge between two shapes; it attaches to each shape's bounding box and re-routes automatically as the shapes move, resize, or rotate. Arrowheads stay a fixed size at any zoom, and deleting an attached shape cleans up its connectors
 - **Direct manipulation** — move, resize (8 handles), rotate
 - **Selection** — click, shift-click, and drag-marquee, with group descent on double-click
 - **Smart alignment guides** — Figma/PowerPoint-style edge and center snapping to nearby objects and the canvas
+- **Grid & snap-to-grid** — toggleable document-space grid with independent snap-to-grid; both persist across sessions
+- **Zoom & pan** — Ctrl/⌘+wheel to zoom at the cursor, two-finger/middle-mouse/Space-drag to pan, plus zoom controls with Fit and a click-to-reset readout
 - **Alignment & distribution** — 6 align ops plus horizontal/vertical distribute
 - **Grouping** — `Ctrl+G` / `Ctrl+Shift+G`
 - **Layers panel** — reorder via right-click (bring to front / send to back / forward / backward), collapse/expand groups
 - **Labels on shapes** — double-click any shape to type a centered label; labels travel with the shape on export
-- **Properties panel** — fill, stroke, stroke width, opacity, font family/size/color
-- **Live SVG source** — always-visible, always-current source pane with Copy / Download / tight-viewBox toggle
+- **Properties panel** — fill, stroke, stroke width, opacity (slider + number), rotation, and font family/size/color; collapsible Layers and SVG-source sections
+- **Live SVG source** — always-current source pane with Copy / Download / tight-viewBox toggle
 - **Import** — paste SVG markup; supports Adobe Illustrator exports (class-based `<style>` inlining, `matrix()` transforms that decompose to translate + rotation)
 - **Undo/redo** — one entry per gesture, up to 200 steps
 
@@ -44,7 +47,7 @@ fetched over `file://`, the modular sources themselves need a static server — 
 | Key | Action |
 |---|---|
 | `V` | Select tool |
-| `R` `C` `E` `L` `P` `T` | Rect / Circle / Ellipse / Line / Polyline / Text tool |
+| `R` `E` `L` `X` `P` `T` | Rect / Ellipse / Line / Connector / Polyline / Text tool |
 | `Esc` | Cancel current tool → Select; also cancels an in-progress polyline |
 | `F2` | Rename label on selected shape |
 | `Delete` / `Backspace` | Delete selection |
@@ -53,9 +56,14 @@ fetched over `file://`, the modular sources themselves need a static server — 
 | `Ctrl+D` | Duplicate selection |
 | `Ctrl+C` / `Ctrl+V` | Copy / Paste |
 | `Ctrl+G` / `Ctrl+Shift+G` | Group / Ungroup |
+| `Ctrl+'` / `Ctrl+Shift+'` | Toggle grid / snap-to-grid |
+| `Ctrl +` / `Ctrl -` | Zoom in / out |
+| `Ctrl+0` / `Ctrl+Shift+0` | Fit to view / reset to 100% |
 | Arrow keys | Nudge selection 1px (hold `Shift` for 10px) |
 
-While drawing: hold `Shift` to constrain rect/ellipse to a square/circle, or a line to 45° increments. While moving: hold `Alt` to bypass snapping.
+While drawing: hold `Shift` to constrain rect/ellipse to a square/circle, or a line to 45° increments. While moving: hold `Alt` to bypass snapping (both smart guides and grid). Ctrl+drag a selection to duplicate it as you move.
+
+Zoom with Ctrl/⌘+wheel (at the cursor); pan with a two-finger scroll, middle-mouse drag, or `Space`+drag.
 
 ## Import support
 
@@ -85,6 +93,9 @@ js/
   layers.js         Illustrator-style layers panel
   align.js          alignment + distribution ops
   guides.js         smart snapping guides drawn during drag
+  grid.js           document-space grid + snap-to-grid (pure view concern)
+  viewport.js       zoom/pan of the canvas viewBox (never touches the model)
+  connectors.js     pure connector geometry — auto-routing between shape boxes
 ```
 
 Architecture note: `state.js` holds the authoritative doc tree; every other module reads from it and re-renders on `subscribe()`. All mutations go through `mutate(fn)`, which deep-clones the root, mutates a draft, then swaps it and notifies subscribers.
