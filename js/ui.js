@@ -7,6 +7,7 @@ import {
 import * as history from "./history.js";
 import { setTool, getTool, cancelPolyline, isTextEditing, openLabelEditor } from "./tools.js";
 import { align } from "./align.js";
+import * as persist from "./persist.js";
 
 const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", l: "line", p: "polyline", t: "text", x: "connector" };
 
@@ -481,6 +482,14 @@ function wireKeyboard() {
     }
     if (mod && e.key.toLowerCase() === "g" && e.shiftKey) {
       ungroupSelection(); e.preventDefault(); return;
+    }
+    // Ctrl+S saves to a .euclid.json file; Ctrl+O opens one. Both must
+    // preventDefault to suppress the browser's native Save-Page / Open-File.
+    if (mod && e.key.toLowerCase() === "s") {
+      persist.saveToFile(); e.preventDefault(); return;
+    }
+    if (mod && e.key.toLowerCase() === "o") {
+      persist.triggerOpen(); e.preventDefault(); return;
     }
     // Ctrl+'  toggles grid; Ctrl+Shift+'  toggles snap-to-grid.
     if (mod && (e.key === "'" || e.key === '"')) {

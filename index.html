@@ -155,6 +155,8 @@
             <label class="tight-toggle" title="Crop viewBox tight to content (8-unit padding)">
               <input type="checkbox" id="tight-mode"> Tight
             </label>
+            <button id="open-btn" type="button">Open</button>
+            <button id="save-btn" type="button">Save</button>
             <button id="import-btn" type="button">Import</button>
             <button id="copy-btn" type="button">Copy</button>
             <button id="download-btn" type="button">Download</button>
@@ -164,6 +166,8 @@
       </section>
     </aside>
   </div>
+
+  <input type="file" id="open-file" accept=".json,application/json" hidden>
 
   <div id="import-modal" class="modal" hidden aria-modal="true" role="dialog" aria-labelledby="import-title">
     <div class="modal-card">

@@ -9,6 +9,7 @@ import * as importer from "./import.js";
 import * as layers from "./layers.js";
 import * as viewport from "./viewport.js";
 import * as grid from "./grid.js";
+import * as persist from "./persist.js";
 
 const svg = document.getElementById("canvas");
 render.mount(svg);
@@ -25,6 +26,11 @@ exp.mountPanel(
 );
 importer.mountImport(document);
 layers.mount(document);
+persist.mount(document);
+
+// Restore the last autosaved document before the first render. Safe no-op if
+// there's nothing saved or localStorage is unavailable (file://).
+persist.restoreAutosave();
 
 // Re-render + refresh downstream views on every state change.
 subscribe(() => {
@@ -32,6 +38,7 @@ subscribe(() => {
   ui.refreshPropertyPanel();
   exp.refreshSourcePanel();
   layers.refresh();
+  persist.scheduleAutosave();
 });
 
 // Initial render.
