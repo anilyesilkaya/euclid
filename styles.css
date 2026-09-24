@@ -614,6 +614,23 @@ html, body {
   overflow: visible;
 }
 
+/* Live angle tooltip shown while dragging the rotate handle. Positioned in
+   screen coords from tools.js so it doesn't scale with zoom. */
+.rotation-readout {
+  position: absolute;
+  z-index: 10;
+  padding: 2px 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
 /* Source panel */
 #source-section {
   display: grid;

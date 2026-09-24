@@ -186,6 +186,7 @@ function onPointerUp(e) {
   } else if (g.type === "resize" || g.type === "rotate") {
     if (g.moved) history.commit(g.type);
     else history.abort();
+    if (g.type === "rotate") hideRotationReadout();
   }
 
   clearTransient();
@@ -897,10 +898,16 @@ function startRotate(e, handleEl, p) {
 
 function updateRotate(p, e) {
   const { id, center, startAngle, originalRot, localCx, localCy } = gesture;
-  let ang = Math.atan2(p.y - center.y, p.x - center.x);
-  let delta = (ang - startAngle) * 180 / Math.PI;
-  if (e.shiftKey) delta = Math.round(delta / 90) * 90;
-  const newRot = originalRot + delta;
+  const ang = Math.atan2(p.y - center.y, p.x - center.x);
+  const delta = (ang - startAngle) * 180 / Math.PI;
+  let newRot = originalRot + delta;
+  // Constrained rotation: Shift snaps the absolute angle to 22.5° increments;
+  // add Ctrl/Cmd for 1° fine increments. Snapping the absolute (not the delta)
+  // yields clean angles like 22.5°/45°/90° regardless of the starting rotation.
+  if (e.shiftKey) {
+    const step = (e.ctrlKey || e.metaKey) ? 1 : 22.5;
+    newRot = Math.round(newRot / step) * step;
+  }
   mutate((root) => {
     const n = findNode(root, id);
     if (!n) return;
@@ -909,6 +916,47 @@ function updateRotate(p, e) {
     n.transform.cx = localCx;
     n.transform.cy = localCy;
   });
+  showRotationReadout(newRot, p);
+}
+
+// --- Rotation readout box (a tooltip that follows the handle during rotate) ---
+
+let rotationReadoutEl = null;
+
+function showRotationReadout(deg, p) {
+  if (!rotationReadoutEl) {
+    rotationReadoutEl = document.createElement("div");
+    rotationReadoutEl.className = "rotation-readout";
+    document.body.appendChild(rotationReadoutEl);
+  }
+  rotationReadoutEl.textContent = formatAngle(deg);
+  const s = canvasToScreen(p);
+  rotationReadoutEl.style.left = `${s.x + 16}px`;
+  rotationReadoutEl.style.top = `${s.y + 16}px`;
+}
+
+function hideRotationReadout() {
+  if (rotationReadoutEl) {
+    try { rotationReadoutEl.remove(); } catch { /* already detached */ }
+    rotationReadoutEl = null;
+  }
+}
+
+// Normalize to [0, 360) and show at most one decimal (so 22.5° reads cleanly).
+function formatAngle(deg) {
+  let a = ((deg % 360) + 360) % 360;
+  a = Math.round(a * 10) / 10;
+  if (a === 360) a = 0;
+  return `${a}°`;
+}
+
+function canvasToScreen(pt) {
+  const ctm = canvasSvg.getScreenCTM();
+  if (!ctm) return { x: pt.x, y: pt.y };
+  const sp = canvasSvg.createSVGPoint();
+  sp.x = pt.x; sp.y = pt.y;
+  const r = sp.matrixTransform(ctm);
+  return { x: r.x, y: r.y };
 }
 
 function localToCanvasPoint(el, x, y) {

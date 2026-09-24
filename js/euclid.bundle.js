@@ -1015,6 +1015,7 @@
     } else if (g.type === "resize" || g.type === "rotate") {
       if (g.moved) commit(g.type);
       else abort();
+      if (g.type === "rotate") hideRotationReadout();
     }
     clearTransient();
   }
@@ -1671,10 +1672,13 @@
   }
   function updateRotate(p, e) {
     const { id, center, startAngle, originalRot, localCx, localCy } = gesture;
-    let ang = Math.atan2(p.y - center.y, p.x - center.x);
-    let delta = (ang - startAngle) * 180 / Math.PI;
-    if (e.shiftKey) delta = Math.round(delta / 90) * 90;
-    const newRot = originalRot + delta;
+    const ang = Math.atan2(p.y - center.y, p.x - center.x);
+    const delta = (ang - startAngle) * 180 / Math.PI;
+    let newRot = originalRot + delta;
+    if (e.shiftKey) {
+      const step = e.ctrlKey || e.metaKey ? 1 : 22.5;
+      newRot = Math.round(newRot / step) * step;
+    }
     mutate((root) => {
       const n = findNode(root, id);
       if (!n) return;
@@ -1683,6 +1687,43 @@
       n.transform.cx = localCx;
       n.transform.cy = localCy;
     });
+    showRotationReadout(newRot, p);
+  }
+  var rotationReadoutEl = null;
+  function showRotationReadout(deg, p) {
+    if (!rotationReadoutEl) {
+      rotationReadoutEl = document.createElement("div");
+      rotationReadoutEl.className = "rotation-readout";
+      document.body.appendChild(rotationReadoutEl);
+    }
+    rotationReadoutEl.textContent = formatAngle(deg);
+    const s = canvasToScreen(p);
+    rotationReadoutEl.style.left = `${s.x + 16}px`;
+    rotationReadoutEl.style.top = `${s.y + 16}px`;
+  }
+  function hideRotationReadout() {
+    if (rotationReadoutEl) {
+      try {
+        rotationReadoutEl.remove();
+      } catch {
+      }
+      rotationReadoutEl = null;
+    }
+  }
+  function formatAngle(deg) {
+    let a = (deg % 360 + 360) % 360;
+    a = Math.round(a * 10) / 10;
+    if (a === 360) a = 0;
+    return `${a}\xB0`;
+  }
+  function canvasToScreen(pt) {
+    const ctm = canvasSvg2.getScreenCTM();
+    if (!ctm) return { x: pt.x, y: pt.y };
+    const sp = canvasSvg2.createSVGPoint();
+    sp.x = pt.x;
+    sp.y = pt.y;
+    const r3 = sp.matrixTransform(ctm);
+    return { x: r3.x, y: r3.y };
   }
   function localToCanvasPoint(el, x, y) {
     const svg3 = canvasSvg2;
