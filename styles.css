@@ -503,6 +503,7 @@ html, body {
   margin-bottom: 8px;
 }
 #layers-list {
+  position: relative; /* anchor for the drag drop-indicator */
   min-height: 0;
   overflow: auto;
   background: var(--panel-2);
@@ -512,6 +513,20 @@ html, body {
   outline: none;
 }
 #layers-list:focus { border-color: var(--accent); }
+#layers-list.reordering { cursor: grabbing; }
+#layers-list.reordering .layer-row { cursor: grabbing; }
+.layer-row.dragging { opacity: 0.4; }
+/* Insertion line shown between rows while dragging to reorder. */
+.layer-drop-indicator {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(76, 154, 255, 0.35);
+}
 .layer-row {
   display: flex;
   align-items: center;

@@ -3796,12 +3796,19 @@
 
   // js/layers.js
   var collapsed = /* @__PURE__ */ new Set();
+  var DRAG_THRESHOLD2 = 4;
   var listEl;
+  var dragCandidate = null;
+  var drag = null;
+  var suppressClick = false;
   function mount6(root) {
     listEl = root.querySelector("#layers-list");
     if (!listEl) return;
     listEl.addEventListener("click", onClick);
     listEl.addEventListener("contextmenu", onContext);
+    listEl.addEventListener("pointerdown", onPointerDown2);
+    window.addEventListener("pointermove", onPointerMove2);
+    window.addEventListener("pointerup", onPointerUp2);
   }
   function refresh() {
     if (!listEl) return;
@@ -3899,6 +3906,11 @@
     if (node.children) for (const c of node.children) walkDoc(c, cb);
   }
   function onClick(e) {
+    if (suppressClick) {
+      suppressClick = false;
+      e.stopPropagation();
+      return;
+    }
     const caret = e.target.closest('[data-role="caret"]');
     if (caret) {
       const row2 = caret.closest(".layer-row");
@@ -3930,6 +3942,109 @@
     else collapsed.add(id);
     refresh();
   }
+  function onPointerDown2(e) {
+    if (e.button !== 0) return;
+    if (e.target.closest('[data-role="caret"]')) return;
+    const row = e.target.closest(".layer-row");
+    if (!row || !row.dataset.id) return;
+    dragCandidate = { id: row.dataset.id, startX: e.clientX, startY: e.clientY };
+  }
+  function onPointerMove2(e) {
+    if (!drag) {
+      if (!dragCandidate) return;
+      const dx = e.clientX - dragCandidate.startX;
+      const dy = e.clientY - dragCandidate.startY;
+      if (Math.hypot(dx, dy) <= DRAG_THRESHOLD2) return;
+      if (!beginDrag(dragCandidate.id)) {
+        dragCandidate = null;
+        return;
+      }
+    }
+    updateDropTarget(e.clientY);
+  }
+  function onPointerUp2() {
+    dragCandidate = null;
+    if (!drag) return;
+    const d = drag;
+    endDrag();
+    commitReorder(d);
+  }
+  function beginDrag(id) {
+    const doc2 = getDoc();
+    const node = findNode(doc2, id);
+    if (!node) return false;
+    const parent = findParent(doc2, id) || doc2;
+    if (!parent.children || parent.children.length < 2) return false;
+    const row = listEl.querySelector(`.layer-row[data-id="${cssEscape4(id)}"]`);
+    if (!row) return false;
+    row.classList.add("dragging");
+    const siblingIds = new Set(parent.children.map((c) => c.id));
+    const siblingRows = [...listEl.querySelectorAll(".layer-row")].filter((r3) => r3.dataset.id !== id && siblingIds.has(r3.dataset.id));
+    const indicator = document.createElement("div");
+    indicator.className = "layer-drop-indicator";
+    listEl.appendChild(indicator);
+    listEl.classList.add("reordering");
+    drag = { id, parent, siblingRows, indicator, dropIndex: 0 };
+    suppressClick = true;
+    return true;
+  }
+  function updateDropTarget(clientY) {
+    const rows = drag.siblingRows;
+    let idx = rows.length;
+    for (let i = 0; i < rows.length; i++) {
+      const r3 = rows[i].getBoundingClientRect();
+      if (clientY < r3.top + r3.height / 2) {
+        idx = i;
+        break;
+      }
+    }
+    drag.dropIndex = idx;
+    const listRect = listEl.getBoundingClientRect();
+    let top;
+    if (rows.length === 0) {
+      top = 2;
+    } else if (idx >= rows.length) {
+      const r3 = rows[rows.length - 1].getBoundingClientRect();
+      top = r3.bottom - listRect.top + listEl.scrollTop;
+    } else {
+      const r3 = rows[idx].getBoundingClientRect();
+      top = r3.top - listRect.top + listEl.scrollTop;
+    }
+    drag.indicator.style.top = `${top}px`;
+  }
+  function endDrag() {
+    const row = listEl.querySelector(`.layer-row[data-id="${cssEscape4(drag.id)}"]`);
+    if (row) row.classList.remove("dragging");
+    try {
+      drag.indicator.remove();
+    } catch {
+    }
+    listEl.classList.remove("reordering");
+    drag = null;
+  }
+  function commitReorder(d) {
+    const topDownSiblings = d.siblingRows.map((r3) => r3.dataset.id);
+    topDownSiblings.splice(d.dropIndex, 0, d.id);
+    const newPaintOrder = topDownSiblings.slice().reverse();
+    const parentId = d.parent.id;
+    const doc2 = getDoc();
+    const parentNow = parentId === doc2.id ? doc2 : findNode(doc2, parentId);
+    if (!parentNow || !parentNow.children) return;
+    const current = parentNow.children.map((c) => c.id);
+    if (current.length === newPaintOrder.length && current.every((id, i) => id === newPaintOrder[i])) return;
+    record(() => {
+      mutate((root) => {
+        const parent = parentId === root.id ? root : findNode(root, parentId);
+        if (!parent || !parent.children) return;
+        const byId = new Map(parent.children.map((c) => [c.id, c]));
+        const reordered = newPaintOrder.map((id) => byId.get(id)).filter(Boolean);
+        if (reordered.length === parent.children.length) parent.children = reordered;
+      });
+    });
+  }
+  function cssEscape4(s) {
+    return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
+  }
 
   // js/viewport.js
   var viewport_exports = {};
@@ -3957,7 +4072,7 @@
     applyViewBox();
     svg.addEventListener("wheel", onWheel, { passive: false });
     svg.addEventListener("pointerdown", onPointerDownCapture, true);
-    window.addEventListener("pointermove", onPointerMove2);
+    window.addEventListener("pointermove", onPointerMove3);
     window.addEventListener("pointerup", onPointerUpCapture, true);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -4021,7 +4136,7 @@
     } catch {
     }
   }
-  function onPointerMove2(e) {
+  function onPointerMove3(e) {
     if (!panning) return;
     const scale = getScale();
     const dx = (e.clientX - panning.startClientX) / scale;

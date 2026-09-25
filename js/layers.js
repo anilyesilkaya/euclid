@@ -1,18 +1,27 @@
 // Illustrator-style layers panel. Renders the doc tree top-down with front-on-top order
 // (i.e., last child in state = first row in the panel, matching paint stack visuals).
 
-import { getDoc, getSelection, setSelection, toggleSelection } from "./state.js";
+import { getDoc, getSelection, setSelection, toggleSelection, mutate, findNode, findParent } from "./state.js";
+import * as history from "./history.js";
 import { openContextMenu } from "./tools.js";
 
 const collapsed = new Set(); // group ids currently collapsed in the panel
+const DRAG_THRESHOLD = 4;    // px the pointer must travel before a drag "takes"
 
 let listEl;
+// Drag-to-reorder state.
+let dragCandidate = null;    // { id, startX, startY } between pointerdown and threshold
+let drag = null;             // active drag: { id, parent, siblingRows, indicator, dropIndex }
+let suppressClick = false;   // set true after a real drag so the trailing click doesn't reselect
 
 export function mount(root) {
   listEl = root.querySelector("#layers-list");
   if (!listEl) return;
   listEl.addEventListener("click", onClick);
   listEl.addEventListener("contextmenu", onContext);
+  listEl.addEventListener("pointerdown", onPointerDown);
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp);
 }
 
 export function refresh() {
@@ -119,6 +128,8 @@ function walkDoc(node, cb) {
 // --- Event handlers ---
 
 function onClick(e) {
+  // A drag just finished — swallow the synthetic click so it doesn't reselect.
+  if (suppressClick) { suppressClick = false; e.stopPropagation(); return; }
   const caret = e.target.closest('[data-role="caret"]');
   if (caret) {
     const row = caret.closest(".layer-row");
@@ -151,4 +162,135 @@ function toggleCollapse(id) {
   if (collapsed.has(id)) collapsed.delete(id);
   else collapsed.add(id);
   refresh();
+}
+
+// --- Drag to reorder ---
+//
+// Pointer-based (not HTML5 DnD) so it works uniformly and is scriptable in tests.
+// Reordering is constrained to SIBLINGS under the same parent — the common case
+// (restacking root layers, or reordering within a group). Cross-parent reparenting
+// is intentionally out of scope for now; a drop is only shown among the dragged
+// row's own siblings. Panel order is top-down = reverse paint order, so the
+// top-most sibling row is the LAST child in state.
+
+function onPointerDown(e) {
+  if (e.button !== 0) return;
+  // Don't start a drag from the collapse caret — that's a click affordance.
+  if (e.target.closest('[data-role="caret"]')) return;
+  const row = e.target.closest(".layer-row");
+  if (!row || !row.dataset.id) return;
+  dragCandidate = { id: row.dataset.id, startX: e.clientX, startY: e.clientY };
+}
+
+function onPointerMove(e) {
+  if (!drag) {
+    if (!dragCandidate) return;
+    const dx = e.clientX - dragCandidate.startX;
+    const dy = e.clientY - dragCandidate.startY;
+    if (Math.hypot(dx, dy) <= DRAG_THRESHOLD) return;
+    if (!beginDrag(dragCandidate.id)) { dragCandidate = null; return; }
+  }
+  updateDropTarget(e.clientY);
+}
+
+function onPointerUp() {
+  dragCandidate = null;
+  if (!drag) return;
+  const d = drag;
+  endDrag();
+  commitReorder(d);
+}
+
+// Snapshot the dragged node's parent + the DOM rows of its siblings (self excluded).
+// Returns false if the node can't be reordered (e.g. a lone child).
+function beginDrag(id) {
+  const doc = getDoc();
+  const node = findNode(doc, id);
+  if (!node) return false;
+  const parent = findParent(doc, id) || doc;
+  if (!parent.children || parent.children.length < 2) return false;
+
+  const row = listEl.querySelector(`.layer-row[data-id="${cssEscape(id)}"]`);
+  if (!row) return false;
+  row.classList.add("dragging");
+
+  // Sibling rows (excluding the dragged one), in panel/DOM order (top-down).
+  const siblingIds = new Set(parent.children.map(c => c.id));
+  const siblingRows = [...listEl.querySelectorAll(".layer-row")]
+    .filter(r => r.dataset.id !== id && siblingIds.has(r.dataset.id));
+
+  const indicator = document.createElement("div");
+  indicator.className = "layer-drop-indicator";
+  listEl.appendChild(indicator);
+
+  listEl.classList.add("reordering");
+  drag = { id, parent, siblingRows, indicator, dropIndex: 0 };
+  suppressClick = true;
+  return true;
+}
+
+// Map the pointer's Y to an insertion slot among the sibling rows (0..N), and
+// place the indicator line at that boundary. dropIndex counts, top-down, how many
+// sibling rows sit above the pointer — i.e. the gap the dragged row would land in.
+function updateDropTarget(clientY) {
+  const rows = drag.siblingRows;
+  let idx = rows.length;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i].getBoundingClientRect();
+    if (clientY < r.top + r.height / 2) { idx = i; break; }
+  }
+  drag.dropIndex = idx;
+
+  const listRect = listEl.getBoundingClientRect();
+  let top;
+  if (rows.length === 0) {
+    top = 2;
+  } else if (idx >= rows.length) {
+    const r = rows[rows.length - 1].getBoundingClientRect();
+    top = r.bottom - listRect.top + listEl.scrollTop;
+  } else {
+    const r = rows[idx].getBoundingClientRect();
+    top = r.top - listRect.top + listEl.scrollTop;
+  }
+  drag.indicator.style.top = `${top}px`;
+}
+
+function endDrag() {
+  const row = listEl.querySelector(`.layer-row[data-id="${cssEscape(drag.id)}"]`);
+  if (row) row.classList.remove("dragging");
+  try { drag.indicator.remove(); } catch { /* already gone */ }
+  listEl.classList.remove("reordering");
+  drag = null;
+}
+
+// Rebuild the parent's children from the new sibling order. siblingRows are in
+// panel order (top-down); state paint order is the reverse. Insert the dragged id
+// at dropIndex within the top-down sibling sequence, then reverse to paint order.
+function commitReorder(d) {
+  const topDownSiblings = d.siblingRows.map(r => r.dataset.id);
+  topDownSiblings.splice(d.dropIndex, 0, d.id);
+  const newPaintOrder = topDownSiblings.slice().reverse();
+
+  const parentId = d.parent.id;
+  const doc = getDoc();
+  const parentNow = parentId === doc.id ? doc : findNode(doc, parentId);
+  if (!parentNow || !parentNow.children) return;
+  // No-op if the order is unchanged.
+  const current = parentNow.children.map(c => c.id);
+  if (current.length === newPaintOrder.length && current.every((id, i) => id === newPaintOrder[i])) return;
+
+  history.record(() => {
+    mutate((root) => {
+      const parent = parentId === root.id ? root : findNode(root, parentId);
+      if (!parent || !parent.children) return;
+      const byId = new Map(parent.children.map(c => [c.id, c]));
+      const reordered = newPaintOrder.map(id => byId.get(id)).filter(Boolean);
+      // Guard: only swap in the rebuilt array if it accounts for every child.
+      if (reordered.length === parent.children.length) parent.children = reordered;
+    });
+  });
+}
+
+function cssEscape(s) {
+  return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, c => `\\${c}`);
 }

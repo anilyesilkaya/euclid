@@ -39,8 +39,11 @@ save/open format with debounced autosave.
   into leaf geometry + child translates (`scaleSubtree` in `tools.js`) so the
   model stays translate+rotate only — no `scale` transform to break export/import.
   Corner handles honor Shift for aspect lock.
-- **M3 — Layer drag-to-reorder.** Add drag reordering in `layers.js` (today
-  z-order is context-menu only), reusing the existing `zOrder` mutations.
+- **M3 — Layer drag-to-reorder.** ✅ **Done.** Pointer-based drag reordering in
+  `layers.js` with an accent drop-indicator line; the dragged row dims while a
+  4px threshold keeps plain clicks selecting. Reorder is constrained to siblings
+  under the same parent (root layers or within a group) and commits one
+  history entry via `mutate`; cross-parent reparenting is intentionally deferred.
 
 ## Phase 2 — draw.io diagramming
 
