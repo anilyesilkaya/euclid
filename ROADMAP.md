@@ -33,10 +33,12 @@ save/open format with debounced autosave.
   `.euclid.json` format (`{version, doc}`), Save (download) / Open (file),
   debounced autosave to localStorage with silent restore on reload.
   `js/persist.js` + `history.resetHistory()`; Ctrl+S / Ctrl+O shortcuts.
-- **M2 — Group & multi-select resize.** Replace the deferred `resizeNode` stub
-  (`tools.js`) and wire functional handles on the multi-selection chrome
-  (`render.js`). Scale group children via the group transform / proportional
-  geometry; honor Shift for aspect lock.
+- **M2 — Group & multi-select resize.** ✅ **Done.** Resizing a group scales its
+  whole subtree, and multi-selection now has functional handles that scale every
+  selected top-level node about the union bbox's fixed anchor. Scale is *baked*
+  into leaf geometry + child translates (`scaleSubtree` in `tools.js`) so the
+  model stays translate+rotate only — no `scale` transform to break export/import.
+  Corner handles honor Shift for aspect lock.
 - **M3 — Layer drag-to-reorder.** Add drag reordering in `layers.js` (today
   z-order is context-menu only), reusing the existing `zOrder` mutations.
 

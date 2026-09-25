@@ -86,6 +86,7 @@ function onPointerDown(e) {
   // Chrome-layer roles override everything else.
   const role = target.getAttribute && target.getAttribute("data-role");
   if (role === "resize") return startResize(e, target, p);
+  if (role === "resize-multi") return startResizeMulti(e, target, p);
   if (role === "rotate") return startRotate(e, target, p);
 
   if (currentTool === "select") return handleSelectDown(e, p, target);
@@ -147,7 +148,7 @@ function onPointerMove(e) {
 function updateHover(e) {
   if (currentTool !== "select") { setHover(null); return; }
   const role = e.target.getAttribute && e.target.getAttribute("data-role");
-  if (role === "resize" || role === "rotate") { setHover(null); return; }
+  if (role === "resize" || role === "resize-multi" || role === "rotate") { setHover(null); return; }
   const hit = hitTest(e.target);
   const id = hit ? pickSelectionId(hit.id) : null;
   setHover(id);
@@ -777,6 +778,61 @@ function startResize(e, handleEl, p) {
     // For v1 simplicity, resize uses canvas-space deltas and treats them as local deltas;
     // this is correct for un-rotated shapes and acceptable for slightly-rotated ones.
   };
+  // Groups scale their whole subtree, so snapshot it and measure the group's
+  // LOCAL (pre-transform) bbox — the space the scale anchor lives in.
+  if (node.type === "group") {
+    const el = getDocLayer().querySelector(`[data-id="${cssEscape(id)}"]`);
+    gesture.origSubtree = structuredClone(node);
+    gesture.localBBox = el ? safeGetBBox(el) : null;
+  }
+}
+
+function safeGetBBox(el) {
+  try { return el.getBBox(); } catch { return null; }
+}
+
+// Multi-selection resize: scale every selected top-level node about the union
+// bounding box's fixed anchor, in canvas space. Snapshots each node's subtree so
+// the scale is re-derived from the pristine state each frame (scaling is destructive).
+function startResizeMulti(e, handleEl, p) {
+  const dir = handleEl.getAttribute("data-handle");
+  const doc = getDoc();
+  const topIds = new Set();
+  for (const id of getSelection()) {
+    const top = topAncestor(doc, id);
+    // Connectors have derived geometry — they follow their endpoints, can't be scaled.
+    if (top && top.type !== "connector") topIds.add(top.id);
+  }
+  if (topIds.size === 0) return;
+
+  // Union bbox in canvas (viewBox) coords from each node's projected element bbox.
+  const snapshots = new Map();
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const id of topIds) {
+    const node = findNode(doc, id);
+    if (!node) continue;
+    snapshots.set(id, structuredClone(node));
+    const el = getDocLayer().querySelector(`[data-id="${cssEscape(id)}"]`);
+    const b = el && elementBBoxInCanvas(el);
+    if (!b) continue;
+    if (b.x1 < minX) minX = b.x1;
+    if (b.y1 < minY) minY = b.y1;
+    if (b.x2 > maxX) maxX = b.x2;
+    if (b.y2 > maxY) maxY = b.y2;
+  }
+  if (!isFinite(minX)) return;
+
+  history.beginTransaction();
+  gesture = {
+    type: "resize",
+    origin: p, last: p, moved: false,
+    dir,
+    multi: {
+      ids: [...topIds],
+      snapshots,
+      bbox: { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+    },
+  };
 }
 
 function cloneShape(node) {
@@ -793,6 +849,39 @@ function updateResize(p, _e) {
   if (grid.isSnap() && !_e?.altKey) p = grid.snapPoint(p.x, p.y);
   const dx = p.x - origin.x;
   const dy = p.y - origin.y;
+
+  // Multi-selection: scale every selected top node about the union anchor (canvas space).
+  if (gesture.multi) {
+    const { ids, snapshots, bbox } = gesture.multi;
+    const { sx, sy, ax, ay } = computeScale(bbox, dir, dx, dy, _e?.shiftKey);
+    mutate((root) => {
+      for (const nid of ids) {
+        const n = findNode(root, nid);
+        const snap = snapshots.get(nid);
+        if (!n || !snap) continue;
+        // Restore pristine geometry, then scale this node about the canvas anchor.
+        n.attrs = structuredClone(snap.attrs);
+        n.transform = structuredClone(snap.transform);
+        if (snap.children) n.children = structuredClone(snap.children);
+        scaleSubtree(n, ax, ay, sx, sy);
+      }
+    });
+    return;
+  }
+
+  // Group: scale the subtree geometry about the fixed anchor (see scaleSubtree).
+  if (gesture.origSubtree && gesture.localBBox) {
+    const { sx, sy, ax, ay } = computeScale(gesture.localBBox, dir, dx, dy, _e?.shiftKey);
+    mutate((root) => {
+      const n = findNode(root, id);
+      if (!n || !n.children) return;
+      // Rebuild children from the pristine snapshot each frame — scaling is destructive.
+      n.children = structuredClone(gesture.origSubtree.children);
+      for (const c of n.children) scaleSubtree(c, ax, ay, sx, sy);
+    });
+    return;
+  }
+
   mutate((root) => {
     const n = findNode(root, id);
     if (!n) return;
@@ -853,10 +942,10 @@ function resizeNode(n, orig, dir, dx, dy) {
     n.attrs.y1 = r.y + sy * r.h;
     n.attrs.x2 = r.x + ex * r.w;
     n.attrs.y2 = r.y + ey * r.h;
-  } else if (n.type === "polyline" || n.type === "group") {
-    // Scale points/children by ratio. For groups we do not descend; instead we scale via transform.
+  } else if (n.type === "polyline") {
+    // Scale points by ratio within the bbox.
     const pts = orig.attrs.points;
-    if (!pts) return; // group resize deferred to v2
+    if (!pts) return;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const [x, y] of pts) {
       if (x < minX) minX = x; if (y < minY) minY = y;
@@ -868,6 +957,79 @@ function resizeNode(n, orig, dir, dx, dy) {
     const sy = bh ? r.h / bh : 1;
     n.attrs.points = pts.map(([x, y]) => [r.x + (x - minX) * sx, r.y + (y - minY) * sy]);
   }
+  // Groups don't resize here — updateResize scales their subtree geometry directly
+  // (see scaleSubtree) so the model stays translate+rotate only (no scale transform).
+}
+
+// --- Scale-by-baking (group & multi-selection resize) ---
+//
+// The transform model is deliberately rigid (translate + rotate only — import/export
+// reject scale/shear). So resizing a container scales its CONTENTS by baking the factor
+// into leaf geometry and child translates rather than adding a scale() transform.
+//
+// Scaling every point p about anchor A by S=diag(sx,sy) is the affine map
+// p ↦ S·(p−A)+A. For a node that decomposes into: reposition its translate via the same
+// formula, scale its own geometry about the local origin, and recurse into children about
+// the local origin (0,0) — because a child's coords already live post-translate. This is
+// exact for un-rotated subtrees (the common case) and for uniform scale under any rotation;
+// non-uniform scale of a rotated subtree is approximated (geometry scales, angle is kept).
+function scaleSubtree(node, ax, ay, sx, sy) {
+  if (!node.transform) node.transform = emptyTransform();
+  const t = node.transform;
+  t.tx = ax + ((t.tx || 0) - ax) * sx;
+  t.ty = ay + ((t.ty || 0) - ay) * sy;
+  // Rotation pivot lives in this node's local space, which we scale about its origin.
+  if (t.rot) { t.cx = (t.cx || 0) * sx; t.cy = (t.cy || 0) * sy; }
+  scaleGeom(node, sx, sy);
+  if (node.children) for (const c of node.children) scaleSubtree(c, 0, 0, sx, sy);
+}
+
+// Scale a single node's own geometry about its local origin (0,0). Radii/font that
+// can't be non-uniform (circle r, text font-size) use the average factor.
+function scaleGeom(node, sx, sy) {
+  const a = node.attrs;
+  const avg = (Math.abs(sx) + Math.abs(sy)) / 2;
+  if (node.type === "rect") {
+    a.x *= sx; a.y *= sy; a.width *= sx; a.height *= sy;
+  } else if (node.type === "ellipse") {
+    a.cx *= sx; a.cy *= sy; a.rx *= sx; a.ry *= sy;
+  } else if (node.type === "circle") {
+    a.cx *= sx; a.cy *= sy; a.r *= avg;
+  } else if (node.type === "line") {
+    a.x1 *= sx; a.y1 *= sy; a.x2 *= sx; a.y2 *= sy;
+  } else if (node.type === "polyline" && Array.isArray(a.points)) {
+    a.points = a.points.map(([x, y]) => [x * sx, y * sy]);
+  } else if (node.type === "text") {
+    a.x *= sx; a.y *= sy;
+    if (a["font-size"]) a["font-size"] *= avg;
+  }
+  // group: no own geometry — children are scaled by the scaleSubtree recursion.
+}
+
+// Derive (sx, sy) and the fixed anchor for a resize drag. bbox is the pre-drag box in
+// the space the scale is applied in; dir is the handle ("nw".."se"); dx/dy the drag delta;
+// shift locks aspect ratio on corner handles. Scale is clamped positive (no flip in v1).
+function computeScale(bbox, dir, dx, dy, shift) {
+  const west = dir.includes("w"), east = dir.includes("e");
+  const north = dir.includes("n"), south = dir.includes("s");
+  const { x, y, width: w, height: h } = bbox;
+  // Anchor is the edge/corner OPPOSITE the one being dragged — it stays put.
+  const ax = west ? x + w : east ? x : x + w / 2;
+  const ay = north ? y + h : south ? y : y + h / 2;
+  let nw = w, nh = h;
+  if (east) nw = w + dx; else if (west) nw = w - dx;
+  if (south) nh = h + dy; else if (north) nh = h - dy;
+  let sx = (east || west) && w ? nw / w : 1;
+  let sy = (north || south) && h ? nh / h : 1;
+  // Corner + Shift: lock aspect ratio to the larger factor (Illustrator-style).
+  if (shift && (east || west) && (north || south)) {
+    const s = Math.max(Math.abs(sx), Math.abs(sy));
+    sx = s; sy = s;
+  }
+  const MIN = 0.02;
+  sx = Math.max(sx, MIN);
+  sy = Math.max(sy, MIN);
+  return { sx, sy, ax, ay };
 }
 
 // --- Rotate handle gesture ---
