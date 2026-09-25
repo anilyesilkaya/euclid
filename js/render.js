@@ -389,17 +389,47 @@ function drawMultiSelectionChrome(boxes) {
   const wrap = document.createElementNS(SVG_NS, "g");
   wrap.setAttribute("data-role", "selection-multi");
 
+  const w = maxX - minX;
+  const h = maxY - minY;
   const outline = document.createElementNS(SVG_NS, "rect");
   outline.setAttribute("class", "selection-outline");
   outline.setAttribute("x", minX);
   outline.setAttribute("y", minY);
-  outline.setAttribute("width", maxX - minX);
-  outline.setAttribute("height", maxY - minY);
+  outline.setAttribute("width", w);
+  outline.setAttribute("height", h);
   wrap.appendChild(outline);
 
-  // Handles in canvas space; multi-selection resize is deferred to a group-move-only interaction in v1.
-  // We still show corner handles for future use, but tools only wire the move gesture on the outline itself.
+  // 8 functional resize handles, in canvas (viewBox) space. The multi chrome carries
+  // no transform, so handles are sized in canvas units scaled to a fixed screen pixel size.
+  const hs = HANDLE_SIZE * canvasPixelScale();
+  const cx = minX + w / 2;
+  const cy = minY + h / 2;
+  const positions = [
+    ["nw", minX, minY], ["n", cx, minY], ["ne", maxX, minY],
+    ["e", maxX, cy], ["se", maxX, maxY], ["s", cx, maxY],
+    ["sw", minX, maxY], ["w", minX, cy],
+  ];
+  for (const [dir, px, py] of positions) {
+    const hnd = document.createElementNS(SVG_NS, "rect");
+    hnd.setAttribute("class", `handle ${dir}`);
+    hnd.setAttribute("data-role", "resize-multi");
+    hnd.setAttribute("data-handle", dir);
+    hnd.setAttribute("x", px - hs / 2);
+    hnd.setAttribute("y", py - hs / 2);
+    hnd.setAttribute("width", hs);
+    hnd.setAttribute("height", hs);
+    wrap.appendChild(hnd);
+  }
   chromeSelection.appendChild(wrap);
+}
+
+// Canvas (viewBox) units per screen pixel at the root — for sizing chrome that
+// lives directly in canvas space (no element transform to mirror).
+function canvasPixelScale() {
+  const ctm = canvasSvg.getScreenCTM();
+  if (!ctm) return 1;
+  const sx = Math.hypot(ctm.a, ctm.b);
+  return sx > 0 ? 1 / sx : 1;
 }
 
 function safeBBox(el) {

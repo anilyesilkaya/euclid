@@ -480,14 +480,46 @@
     if (!isFinite(minX)) return;
     const wrap = document.createElementNS(SVG_NS, "g");
     wrap.setAttribute("data-role", "selection-multi");
+    const w = maxX - minX;
+    const h = maxY - minY;
     const outline = document.createElementNS(SVG_NS, "rect");
     outline.setAttribute("class", "selection-outline");
     outline.setAttribute("x", minX);
     outline.setAttribute("y", minY);
-    outline.setAttribute("width", maxX - minX);
-    outline.setAttribute("height", maxY - minY);
+    outline.setAttribute("width", w);
+    outline.setAttribute("height", h);
     wrap.appendChild(outline);
+    const hs = HANDLE_SIZE * canvasPixelScale();
+    const cx = minX + w / 2;
+    const cy = minY + h / 2;
+    const positions = [
+      ["nw", minX, minY],
+      ["n", cx, minY],
+      ["ne", maxX, minY],
+      ["e", maxX, cy],
+      ["se", maxX, maxY],
+      ["s", cx, maxY],
+      ["sw", minX, maxY],
+      ["w", minX, cy]
+    ];
+    for (const [dir, px, py] of positions) {
+      const hnd = document.createElementNS(SVG_NS, "rect");
+      hnd.setAttribute("class", `handle ${dir}`);
+      hnd.setAttribute("data-role", "resize-multi");
+      hnd.setAttribute("data-handle", dir);
+      hnd.setAttribute("x", px - hs / 2);
+      hnd.setAttribute("y", py - hs / 2);
+      hnd.setAttribute("width", hs);
+      hnd.setAttribute("height", hs);
+      wrap.appendChild(hnd);
+    }
     chromeSelection.appendChild(wrap);
+  }
+  function canvasPixelScale() {
+    const ctm = canvasSvg.getScreenCTM();
+    if (!ctm) return 1;
+    const sx = Math.hypot(ctm.a, ctm.b);
+    return sx > 0 ? 1 / sx : 1;
   }
   function safeBBox(el) {
     try {
@@ -929,6 +961,7 @@
     downClient = { x: e.clientX, y: e.clientY };
     const role = target.getAttribute && target.getAttribute("data-role");
     if (role === "resize") return startResize(e, target, p);
+    if (role === "resize-multi") return startResizeMulti(e, target, p);
     if (role === "rotate") return startRotate(e, target, p);
     if (currentTool === "select") return handleSelectDown(e, p, target);
     if (currentTool === "polyline") return handlePolylineDown(e, p);
@@ -979,7 +1012,7 @@
       return;
     }
     const role = e.target.getAttribute && e.target.getAttribute("data-role");
-    if (role === "resize" || role === "rotate") {
+    if (role === "resize" || role === "resize-multi" || role === "rotate") {
       setHover(null);
       return;
     }
@@ -1541,6 +1574,56 @@
       // For v1 simplicity, resize uses canvas-space deltas and treats them as local deltas;
       // this is correct for un-rotated shapes and acceptable for slightly-rotated ones.
     };
+    if (node.type === "group") {
+      const el = getDocLayer().querySelector(`[data-id="${cssEscape2(id)}"]`);
+      gesture.origSubtree = structuredClone(node);
+      gesture.localBBox = el ? safeGetBBox(el) : null;
+    }
+  }
+  function safeGetBBox(el) {
+    try {
+      return el.getBBox();
+    } catch {
+      return null;
+    }
+  }
+  function startResizeMulti(e, handleEl, p) {
+    const dir = handleEl.getAttribute("data-handle");
+    const doc2 = getDoc();
+    const topIds = /* @__PURE__ */ new Set();
+    for (const id of getSelection()) {
+      const top = topAncestor(doc2, id);
+      if (top && top.type !== "connector") topIds.add(top.id);
+    }
+    if (topIds.size === 0) return;
+    const snapshots = /* @__PURE__ */ new Map();
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const id of topIds) {
+      const node = findNode(doc2, id);
+      if (!node) continue;
+      snapshots.set(id, structuredClone(node));
+      const el = getDocLayer().querySelector(`[data-id="${cssEscape2(id)}"]`);
+      const b = el && elementBBoxInCanvas(el);
+      if (!b) continue;
+      if (b.x1 < minX) minX = b.x1;
+      if (b.y1 < minY) minY = b.y1;
+      if (b.x2 > maxX) maxX = b.x2;
+      if (b.y2 > maxY) maxY = b.y2;
+    }
+    if (!isFinite(minX)) return;
+    beginTransaction();
+    gesture = {
+      type: "resize",
+      origin: p,
+      last: p,
+      moved: false,
+      dir,
+      multi: {
+        ids: [...topIds],
+        snapshots,
+        bbox: { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+      }
+    };
   }
   function cloneShape(node) {
     return {
@@ -1553,6 +1636,32 @@
     if (isSnap() && !_e?.altKey) p = snapPoint(p.x, p.y);
     const dx = p.x - origin.x;
     const dy = p.y - origin.y;
+    if (gesture.multi) {
+      const { ids, snapshots, bbox } = gesture.multi;
+      const { sx, sy, ax, ay } = computeScale(bbox, dir, dx, dy, _e?.shiftKey);
+      mutate((root) => {
+        for (const nid of ids) {
+          const n = findNode(root, nid);
+          const snap2 = snapshots.get(nid);
+          if (!n || !snap2) continue;
+          n.attrs = structuredClone(snap2.attrs);
+          n.transform = structuredClone(snap2.transform);
+          if (snap2.children) n.children = structuredClone(snap2.children);
+          scaleSubtree(n, ax, ay, sx, sy);
+        }
+      });
+      return;
+    }
+    if (gesture.origSubtree && gesture.localBBox) {
+      const { sx, sy, ax, ay } = computeScale(gesture.localBBox, dir, dx, dy, _e?.shiftKey);
+      mutate((root) => {
+        const n = findNode(root, id);
+        if (!n || !n.children) return;
+        n.children = structuredClone(gesture.origSubtree.children);
+        for (const c of n.children) scaleSubtree(c, ax, ay, sx, sy);
+      });
+      return;
+    }
     mutate((root) => {
       const n = findNode(root, id);
       if (!n) return;
@@ -1630,7 +1739,7 @@
       n.attrs.y1 = r3.y + sy * r3.h;
       n.attrs.x2 = r3.x + ex * r3.w;
       n.attrs.y2 = r3.y + ey * r3.h;
-    } else if (n.type === "polyline" || n.type === "group") {
+    } else if (n.type === "polyline") {
       const pts = orig.attrs.points;
       if (!pts) return;
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -1646,6 +1755,71 @@
       const sy = bh ? r3.h / bh : 1;
       n.attrs.points = pts.map(([x, y]) => [r3.x + (x - minX) * sx, r3.y + (y - minY) * sy]);
     }
+  }
+  function scaleSubtree(node, ax, ay, sx, sy) {
+    if (!node.transform) node.transform = emptyTransform();
+    const t = node.transform;
+    t.tx = ax + ((t.tx || 0) - ax) * sx;
+    t.ty = ay + ((t.ty || 0) - ay) * sy;
+    if (t.rot) {
+      t.cx = (t.cx || 0) * sx;
+      t.cy = (t.cy || 0) * sy;
+    }
+    scaleGeom(node, sx, sy);
+    if (node.children) for (const c of node.children) scaleSubtree(c, 0, 0, sx, sy);
+  }
+  function scaleGeom(node, sx, sy) {
+    const a = node.attrs;
+    const avg = (Math.abs(sx) + Math.abs(sy)) / 2;
+    if (node.type === "rect") {
+      a.x *= sx;
+      a.y *= sy;
+      a.width *= sx;
+      a.height *= sy;
+    } else if (node.type === "ellipse") {
+      a.cx *= sx;
+      a.cy *= sy;
+      a.rx *= sx;
+      a.ry *= sy;
+    } else if (node.type === "circle") {
+      a.cx *= sx;
+      a.cy *= sy;
+      a.r *= avg;
+    } else if (node.type === "line") {
+      a.x1 *= sx;
+      a.y1 *= sy;
+      a.x2 *= sx;
+      a.y2 *= sy;
+    } else if (node.type === "polyline" && Array.isArray(a.points)) {
+      a.points = a.points.map(([x, y]) => [x * sx, y * sy]);
+    } else if (node.type === "text") {
+      a.x *= sx;
+      a.y *= sy;
+      if (a["font-size"]) a["font-size"] *= avg;
+    }
+  }
+  function computeScale(bbox, dir, dx, dy, shift) {
+    const west = dir.includes("w"), east = dir.includes("e");
+    const north = dir.includes("n"), south = dir.includes("s");
+    const { x, y, width: w, height: h } = bbox;
+    const ax = west ? x + w : east ? x : x + w / 2;
+    const ay = north ? y + h : south ? y : y + h / 2;
+    let nw = w, nh = h;
+    if (east) nw = w + dx;
+    else if (west) nw = w - dx;
+    if (south) nh = h + dy;
+    else if (north) nh = h - dy;
+    let sx = (east || west) && w ? nw / w : 1;
+    let sy = (north || south) && h ? nh / h : 1;
+    if (shift && (east || west) && (north || south)) {
+      const s = Math.max(Math.abs(sx), Math.abs(sy));
+      sx = s;
+      sy = s;
+    }
+    const MIN = 0.02;
+    sx = Math.max(sx, MIN);
+    sy = Math.max(sy, MIN);
+    return { sx, sy, ax, ay };
   }
   function startRotate(e, handleEl, p) {
     const id = handleEl.getAttribute("data-id");
