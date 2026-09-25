@@ -195,8 +195,10 @@ html, body {
   pointer-events: none;
 }
 /* Fatten the invisible hit area of thin connectors so they're easy to click. */
-#doc-layer line[data-connector] {
+#doc-layer line[data-connector],
+#doc-layer polyline[data-connector] {
   stroke-linecap: round;
+  stroke-linejoin: round;
 }
 #chrome-layer .connector-selected {
   fill: none;

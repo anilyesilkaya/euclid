@@ -110,19 +110,25 @@ function emitNode(node, depth) {
   if (node.type === "connector") {
     const g = resolveConnector(node);
     if (!g || !g.valid) return []; // dangling connector: emit nothing
-    const parts = [
-      `x1="${round(g.x1)}"`, `y1="${round(g.y1)}"`,
-      `x2="${round(g.x2)}"`, `y2="${round(g.y2)}"`,
-    ];
+    // Orthogonal routes resolve to a point list → <polyline>; straight → <line>.
+    const orthogonal = Array.isArray(g.points);
+    const tag = orthogonal ? "polyline" : "line";
+    const parts = orthogonal
+      ? [`points="${g.points.map(([x, y]) => `${round(x)},${round(y)}`).join(" ")}"`, `fill="none"`]
+      : [
+          `x1="${round(g.x1)}"`, `y1="${round(g.y1)}"`,
+          `x2="${round(g.x2)}"`, `y2="${round(g.y2)}"`,
+        ];
     for (const k of PRESENTATION_ATTRS) {
       if (!(k in (node.attrs || {}))) continue;
+      if (orthogonal && k === "fill") continue; // already emitted fill="none"
       const v = node.attrs[k];
       if (isDefault(k, v)) continue;
       parts.push(`${k}="${formatValue(k, v)}"`);
     }
     if (node.arrowEnd) parts.push(`marker-end="url(#arrow-end)"`);
     if (node.arrowStart) parts.push(`marker-start="url(#arrow-start)"`);
-    return [`${pad}<line ${parts.join(" ")}/>`];
+    return [`${pad}<${tag} ${parts.join(" ")}/>`];
   }
 
   const attrs = buildAttrs(node);

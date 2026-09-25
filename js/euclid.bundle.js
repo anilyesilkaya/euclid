@@ -143,6 +143,91 @@
     if (!from || !to) return { valid: false };
     return { x1: from.x, y1: from.y, x2: to.x, y2: to.y, valid: true };
   }
+  function orthExit(box, toward) {
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const dx = toward.x - cx;
+    const dy = toward.y - cy;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      return dx >= 0 ? { pt: { x: box.x + box.width, y: cy }, dir: "e" } : { pt: { x: box.x, y: cy }, dir: "w" };
+    }
+    return dy >= 0 ? { pt: { x: cx, y: box.y + box.height }, dir: "s" } : { pt: { x: cx, y: box.y }, dir: "n" };
+  }
+  function dirToward(from, to) {
+    const dx = (to?.x ?? from.x) - from.x;
+    const dy = (to?.y ?? from.y) - from.y;
+    if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "e" : "w";
+    return dy >= 0 ? "s" : "n";
+  }
+  function elbowPoints(a, dirA, b, dirB) {
+    const horizA = dirA === "e" || dirA === "w";
+    const horizB = dirB === "e" || dirB === "w";
+    const pts = [a];
+    if (horizA && horizB) {
+      const midX = (a.x + b.x) / 2;
+      pts.push({ x: midX, y: a.y }, { x: midX, y: b.y });
+    } else if (!horizA && !horizB) {
+      const midY = (a.y + b.y) / 2;
+      pts.push({ x: a.x, y: midY }, { x: b.x, y: midY });
+    } else if (horizA && !horizB) {
+      pts.push({ x: b.x, y: a.y });
+    } else {
+      pts.push({ x: a.x, y: b.y });
+    }
+    pts.push(b);
+    return pts;
+  }
+  function approx(a, b) {
+    return Math.abs(a - b) < 1e-6;
+  }
+  function cleanPath(pts) {
+    const dedup = [];
+    for (const p of pts) {
+      const last = dedup[dedup.length - 1];
+      if (last && approx(last.x, p.x) && approx(last.y, p.y)) continue;
+      dedup.push({ x: p.x, y: p.y });
+    }
+    const out = [];
+    for (let i = 0; i < dedup.length; i++) {
+      const prev = out[out.length - 1];
+      const cur = dedup[i];
+      const next = dedup[i + 1];
+      if (prev && next) {
+        const collinearH = approx(prev.y, cur.y) && approx(cur.y, next.y);
+        const collinearV = approx(prev.x, cur.x) && approx(cur.x, next.x);
+        if (collinearH || collinearV) continue;
+      }
+      out.push(cur);
+    }
+    return out.length >= 2 ? out : dedup;
+  }
+  function routeOrthogonal(fromBox, toBox, fromPt, toPt, waypoints) {
+    const fromCenter = fromBox ? centerOf(fromBox) : fromPt;
+    const toCenter = toBox ? centerOf(toBox) : toPt;
+    if (!fromCenter || !toCenter) return { valid: false };
+    const wps = Array.isArray(waypoints) ? waypoints.filter((w) => w && isFinite(w.x) && isFinite(w.y)) : [];
+    const firstTarget = wps.length ? wps[0] : toCenter;
+    const lastTarget = wps.length ? wps[wps.length - 1] : fromCenter;
+    const a = fromBox ? orthExit(fromBox, firstTarget) : { pt: fromPt, dir: dirToward(fromPt, firstTarget) };
+    const b = toBox ? orthExit(toBox, lastTarget) : { pt: toPt, dir: dirToward(toPt, lastTarget) };
+    if (!a.pt || !b.pt) return { valid: false };
+    let raw;
+    if (wps.length === 0) {
+      raw = elbowPoints(a.pt, a.dir, b.pt, b.dir);
+    } else {
+      const anchors = [a.pt, ...wps, b.pt];
+      raw = [anchors[0]];
+      for (let i = 0; i < anchors.length - 1; i++) {
+        const p = anchors[i], q = anchors[i + 1];
+        if (!approx(p.x, q.x) && !approx(p.y, q.y)) {
+          raw.push(i % 2 === 0 ? { x: q.x, y: p.y } : { x: p.x, y: q.y });
+        }
+        raw.push(q);
+      }
+    }
+    const points = cleanPath(raw).map((p) => [p.x, p.y]);
+    return { points, valid: true };
+  }
 
   // js/render.js
   var SVG_NS = "http://www.w3.org/2000/svg";
@@ -219,20 +304,30 @@
   function connectorElement(node) {
     const geom = resolveConnector(node);
     if (!geom || !geom.valid) return null;
+    const el = geom.points ? polylineConnector(geom.points) : lineConnector(geom);
+    el.setAttribute("data-id", node.id);
+    el.setAttribute("data-connector", "1");
+    for (const [k, v] of Object.entries(node.attrs || {})) {
+      if (v === void 0 || v === null || v === "") continue;
+      el.setAttribute(k, formatAttr(k, v));
+    }
+    if (node.arrowEnd) el.setAttribute("marker-end", "url(#arrow-end)");
+    if (node.arrowStart) el.setAttribute("marker-start", "url(#arrow-start)");
+    return el;
+  }
+  function lineConnector(geom) {
     const line = document.createElementNS(SVG_NS, "line");
-    line.setAttribute("data-id", node.id);
-    line.setAttribute("data-connector", "1");
     line.setAttribute("x1", round(geom.x1));
     line.setAttribute("y1", round(geom.y1));
     line.setAttribute("x2", round(geom.x2));
     line.setAttribute("y2", round(geom.y2));
-    for (const [k, v] of Object.entries(node.attrs || {})) {
-      if (v === void 0 || v === null || v === "") continue;
-      line.setAttribute(k, formatAttr(k, v));
-    }
-    if (node.arrowEnd) line.setAttribute("marker-end", "url(#arrow-end)");
-    if (node.arrowStart) line.setAttribute("marker-start", "url(#arrow-start)");
     return line;
+  }
+  function polylineConnector(points) {
+    const pl = document.createElementNS(SVG_NS, "polyline");
+    pl.setAttribute("points", points.map(([x, y]) => `${round(x)},${round(y)}`).join(" "));
+    pl.setAttribute("fill", "none");
+    return pl;
   }
   function resolveConnector(node) {
     const end = (e) => {
@@ -247,6 +342,9 @@
     const a = end(node.from);
     const b = end(node.to);
     if (a.missing || b.missing) return { valid: false };
+    if (node.route === "orthogonal") {
+      return routeOrthogonal(a.box, b.box, a.pt, b.pt, node.waypoints);
+    }
     return routeStraight(a.box, b.box, a.pt, b.pt);
   }
   function nodeToElement(node) {
@@ -395,12 +493,18 @@
     }
   }
   function drawConnectorSelection({ el }) {
-    const overlay = document.createElementNS(SVG_NS, "line");
+    const isPolyline = el.tagName.toLowerCase() === "polyline";
+    const overlay = document.createElementNS(SVG_NS, isPolyline ? "polyline" : "line");
     overlay.setAttribute("class", "connector-selected");
-    overlay.setAttribute("x1", el.getAttribute("x1"));
-    overlay.setAttribute("y1", el.getAttribute("y1"));
-    overlay.setAttribute("x2", el.getAttribute("x2"));
-    overlay.setAttribute("y2", el.getAttribute("y2"));
+    if (isPolyline) {
+      overlay.setAttribute("points", el.getAttribute("points"));
+      overlay.setAttribute("fill", "none");
+    } else {
+      overlay.setAttribute("x1", el.getAttribute("x1"));
+      overlay.setAttribute("y1", el.getAttribute("y1"));
+      overlay.setAttribute("x2", el.getAttribute("x2"));
+      overlay.setAttribute("y2", el.getAttribute("y2"));
+    }
     chromeSelection.appendChild(overlay);
   }
   function drawSingleSelectionChrome({ id, el, box }) {
@@ -2440,6 +2544,9 @@
   var pFontFamily;
   var pTextColor;
   var pRotation;
+  var pConnectorRoute;
+  var connectorDivider;
+  var connectorRouteRow;
   var clipboard = null;
   var gridApi = null;
   function mount5(root) {
@@ -2524,6 +2631,9 @@
     pFontFamily = root.querySelector("#p-font-family");
     pTextColor = root.querySelector("#p-text-color");
     pRotation = root.querySelector("#p-rotation");
+    pConnectorRoute = root.querySelector("#p-connector-route");
+    connectorDivider = root.querySelector("#connector-divider");
+    connectorRouteRow = root.querySelector("#connector-route-row");
     pFill.addEventListener("input", () => applyToSelection("fill", pFill.value));
     pFill.addEventListener("change", () => historyCommitAfter(() => applyToSelection("fill", pFill.value)));
     pFillNone.addEventListener("change", () => historyRecord(() => applyToSelection("fill", pFillNone.checked ? "none" : pFill.value)));
@@ -2564,6 +2674,7 @@
     pFontSize.addEventListener("change", () => historyCommitAfter(() => applyFontSize(Number(pFontSize.value))));
     pFontSize.addEventListener("pointerdown", () => beginTransaction());
     pFontFamily.addEventListener("change", () => historyRecord(() => applyFontFamily(pFontFamily.value)));
+    pConnectorRoute.addEventListener("change", () => historyRecord(() => applyConnectorRoute(pConnectorRoute.value)));
     pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
     pTextColor.addEventListener("change", () => historyCommitAfter(() => applyTextColor(pTextColor.value)));
     pRotation.addEventListener("input", () => {
@@ -2634,6 +2745,19 @@
         } else if (n.label) {
           n.labelStyle = { ...n.labelStyle || {}, "font-family": value };
         }
+      }
+    });
+  }
+  function applyConnectorRoute(value) {
+    const ids = [...getSelection()];
+    if (ids.length === 0) return;
+    mutate((root) => {
+      for (const id of ids) {
+        const n = findNode(root, id);
+        if (!n || n.type !== "connector") continue;
+        if (value === "orthogonal") n.route = "orthogonal";
+        else delete n.route;
+        delete n.waypoints;
       }
     });
   }
@@ -2717,6 +2841,13 @@
       b.disabled = !canDistribute;
     });
     const doc2 = getDoc();
+    const connectors = ids.map((id) => findNode(doc2, id)).filter((n) => n && n.type === "connector");
+    const showConnector = connectors.length > 0;
+    if (connectorDivider) connectorDivider.hidden = !showConnector;
+    if (connectorRouteRow) connectorRouteRow.hidden = !showConnector;
+    if (showConnector && pConnectorRoute) {
+      pConnectorRoute.value = connectors[0].route === "orthogonal" ? "orthogonal" : "straight";
+    }
     let sample = null;
     for (const id of ids) {
       const n = findNode(doc2, id);
@@ -3171,7 +3302,9 @@
     if (node.type === "connector") {
       const g = resolveConnector(node);
       if (!g || !g.valid) return [];
-      const parts = [
+      const orthogonal = Array.isArray(g.points);
+      const tag = orthogonal ? "polyline" : "line";
+      const parts = orthogonal ? [`points="${g.points.map(([x, y]) => `${round3(x)},${round3(y)}`).join(" ")}"`, `fill="none"`] : [
         `x1="${round3(g.x1)}"`,
         `y1="${round3(g.y1)}"`,
         `x2="${round3(g.x2)}"`,
@@ -3179,13 +3312,14 @@
       ];
       for (const k of PRESENTATION_ATTRS) {
         if (!(k in (node.attrs || {}))) continue;
+        if (orthogonal && k === "fill") continue;
         const v = node.attrs[k];
         if (isDefault(k, v)) continue;
         parts.push(`${k}="${formatValue(k, v)}"`);
       }
       if (node.arrowEnd) parts.push(`marker-end="url(#arrow-end)"`);
       if (node.arrowStart) parts.push(`marker-start="url(#arrow-start)"`);
-      return [`${pad}<line ${parts.join(" ")}/>`];
+      return [`${pad}<${tag} ${parts.join(" ")}/>`];
     }
     const attrs = buildAttrs(node);
     const attrStr = attrs.length ? " " + attrs.join(" ") : "";

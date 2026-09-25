@@ -13,6 +13,7 @@ const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line"
 
 let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity, pOpacityNum;
 let pText, pFontSize, pFontFamily, pTextColor, pRotation;
+let pConnectorRoute, connectorDivider, connectorRouteRow;
 let clipboard = null;
 let gridApi = null;   // set by mountGrid; used by keyboard shortcuts
 
@@ -120,6 +121,9 @@ function wireProperties(root) {
   pFontFamily = root.querySelector("#p-font-family");
   pTextColor = root.querySelector("#p-text-color");
   pRotation = root.querySelector("#p-rotation");
+  pConnectorRoute = root.querySelector("#p-connector-route");
+  connectorDivider = root.querySelector("#connector-divider");
+  connectorRouteRow = root.querySelector("#connector-route-row");
 
   pFill.addEventListener("input", () => applyToSelection("fill", pFill.value));
   pFill.addEventListener("change", () => historyCommitAfter(() => applyToSelection("fill", pFill.value)));
@@ -164,6 +168,9 @@ function wireProperties(root) {
   pFontSize.addEventListener("pointerdown", () => history.beginTransaction());
 
   pFontFamily.addEventListener("change", () => historyRecord(() => applyFontFamily(pFontFamily.value)));
+
+  // Connector routing style (Straight / Orthogonal). One history entry per change.
+  pConnectorRoute.addEventListener("change", () => historyRecord(() => applyConnectorRoute(pConnectorRoute.value)));
 
   pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
   pTextColor.addEventListener("change", () => historyCommitAfter(() => applyTextColor(pTextColor.value)));
@@ -239,6 +246,24 @@ function applyFontFamily(value) {
       } else if (n.label) {
         n.labelStyle = { ...(n.labelStyle || {}), "font-family": value };
       }
+    }
+  });
+}
+
+// Set the routing style on every selected connector. "straight" is the default,
+// so we clear the flag rather than storing it; "orthogonal" stores the mode.
+// Changing routing invalidates any stored waypoints (they were placed for the
+// old path), so drop them.
+function applyConnectorRoute(value) {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  mutate((root) => {
+    for (const id of ids) {
+      const n = findNode(root, id);
+      if (!n || n.type !== "connector") continue;
+      if (value === "orthogonal") n.route = "orthogonal";
+      else delete n.route;
+      delete n.waypoints;
     }
   });
 }
@@ -335,6 +360,16 @@ export function refreshPropertyPanel() {
 
   // Read from the first selected shape (or first descendant shape of a selected group).
   const doc = getDoc();
+
+  // Connector routing row: show when any selected node is a connector; reflect
+  // the first connector's routing mode.
+  const connectors = ids.map(id => findNode(doc, id)).filter(n => n && n.type === "connector");
+  const showConnector = connectors.length > 0;
+  if (connectorDivider) connectorDivider.hidden = !showConnector;
+  if (connectorRouteRow) connectorRouteRow.hidden = !showConnector;
+  if (showConnector && pConnectorRoute) {
+    pConnectorRoute.value = connectors[0].route === "orthogonal" ? "orthogonal" : "straight";
+  }
   let sample = null;
   for (const id of ids) {
     const n = findNode(doc, id);
