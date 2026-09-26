@@ -2,7 +2,7 @@
 // Same output powers the live source panel, Copy, and Download.
 
 import { getDoc } from "./state.js";
-import { elementBBoxInCanvas, resolveConnector } from "./render.js";
+import { elementBBoxInCanvas, resolveConnector, connectorMidpoint } from "./render.js";
 
 const DEFAULT_VIEWBOX = { x: 0, y: 0, width: 1000, height: 700 };
 const TIGHT_PADDING = 8;
@@ -128,7 +128,25 @@ function emitNode(node, depth) {
     }
     if (node.arrowEnd) parts.push(`marker-end="url(#arrow-end)"`);
     if (node.arrowStart) parts.push(`marker-start="url(#arrow-start)"`);
-    return [`${pad}<${tag} ${parts.join(" ")}/>`];
+    const out = [`${pad}<${tag} ${parts.join(" ")}/>`];
+    // Mid-edge label — a haloed <text> at the path midpoint, matching render.js.
+    if (node.label) {
+      const mid = connectorMidpoint(g);
+      if (mid) {
+        const style = node.labelStyle || {};
+        const lp = [
+          `x="${round(mid.x)}"`, `y="${round(mid.y)}"`,
+          `text-anchor="middle"`, `dominant-baseline="middle"`,
+          `font-family="${escapeXml(String(style["font-family"] || "sans-serif"))}"`,
+          `font-size="${round(style["font-size"] || 16)}"`,
+          `fill="${escapeXml(String(style.fill || "#000000"))}"`,
+          `stroke="#ffffff"`, `stroke-width="3"`, `stroke-linejoin="round"`,
+          `paint-order="stroke"`,
+        ];
+        out.push(`${pad}<text ${lp.join(" ")}>${escapeXmlText(String(node.label))}</text>`);
+      }
+    }
+    return out;
   }
 
   const attrs = buildAttrs(node);

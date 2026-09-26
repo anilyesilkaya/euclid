@@ -58,9 +58,15 @@ save/open format with debounced autosave.
   commit one history entry; switching routing clears waypoints. Geometry is still
   never stored beyond the `route` flag + `waypoints` — edges re-route from live
   shape boxes on move/resize/rotate.
-- **M5 — Connector labels + arrowhead UI.** Expose the existing
-  `arrowStart` / `arrowEnd` model flags in the panel, plus a mid-edge label
-  (reuse the label editor from `tools.js`).
+- **M5 — Connector labels + arrowhead UI.** ✅ **Done.** The property panel's
+  **CONNECTOR** section now has **Arrow at start / Arrow at end** checkboxes
+  (wired to the `arrowStart` / `arrowEnd` flags) alongside the routing dropdown.
+  Connectors carry a mid-edge label: the shared Content/font fields drive
+  `.label` / `.labelStyle` (connectors are non-text, so they reused the existing
+  label path for free), and double-clicking a connector opens the same inline
+  label editor centered on the path midpoint. Labels render as a haloed `<text>`
+  at half the path length (`connectorMidpoint` in `render.js`, honoring both
+  straight and orthogonal routes) and round-trip through export.
 
 ## Phase 3 — Illustrator vector editing
 

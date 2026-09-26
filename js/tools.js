@@ -6,7 +6,7 @@ import {
   mutate, newId, emptyTransform, findNode, findPath, topAncestor, walk,
 } from "./state.js";
 import * as history from "./history.js";
-import { toCanvasPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix, setHoverOutline, clearHoverOutline } from "./render.js";
+import { toCanvasPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix, setHoverOutline, clearHoverOutline, resolveConnector, connectorMidpoint } from "./render.js";
 import * as guides from "./guides.js";
 import * as grid from "./grid.js";
 import { routeStraight } from "./connectors.js";
@@ -1332,7 +1332,19 @@ function positionForLabel(node) {
     const r = labelDom.getBoundingClientRect();
     return { ...base, left: `${r.left + r.width / 2}px`, top: `${r.top + r.height / 2}px` };
   }
-  // No label yet — center the editor over the shape itself.
+  // No label yet. A connector has no meaningful bbox center (its box spans the
+  // gap between shapes), so center on the path midpoint in canvas → screen coords.
+  if (node.type === "connector") {
+    const geom = resolveConnector(node);
+    const mid = connectorMidpoint(geom);
+    const ctmS = svg.getScreenCTM();
+    if (mid && ctmS) {
+      const pt = svg.createSVGPoint(); pt.x = mid.x; pt.y = mid.y;
+      const s = pt.matrixTransform(ctmS);
+      return { ...base, left: `${s.x}px`, top: `${s.y}px` };
+    }
+  }
+  // Otherwise center the editor over the shape itself.
   const shapeDom = getDocLayer().querySelector(`[data-id="${cssEscape(node.id)}"]`);
   if (shapeDom) {
     const r = shapeDom.getBoundingClientRect();

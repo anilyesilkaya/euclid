@@ -301,13 +301,16 @@
       docLayer.appendChild(nodeToElement(child));
     }
     for (const node of connectorNodes) {
-      const el = connectorElement(node);
-      if (el) docLayer.appendChild(el);
+      const geom = resolveConnector(node);
+      if (!geom || !geom.valid) continue;
+      docLayer.appendChild(connectorElement(node, geom));
+      if (node.label) {
+        const mid = connectorMidpoint(geom);
+        if (mid) docLayer.appendChild(connectorLabelElement(node, mid));
+      }
     }
   }
-  function connectorElement(node) {
-    const geom = resolveConnector(node);
-    if (!geom || !geom.valid) return null;
+  function connectorElement(node, geom) {
     const el = geom.points ? polylineConnector(geom.points) : lineConnector(geom);
     el.setAttribute("data-id", node.id);
     el.setAttribute("data-connector", "1");
@@ -318,6 +321,53 @@
     if (node.arrowEnd) el.setAttribute("marker-end", "url(#arrow-end)");
     if (node.arrowStart) el.setAttribute("marker-start", "url(#arrow-start)");
     return el;
+  }
+  function connectorLabelElement(node, mid) {
+    const style = node.labelStyle || {};
+    const t = document.createElementNS(SVG_NS, "text");
+    t.setAttribute("data-id", node.id);
+    t.setAttribute("data-role", "label");
+    t.setAttribute("data-owner", node.id);
+    t.setAttribute("x", round(mid.x));
+    t.setAttribute("y", round(mid.y));
+    t.setAttribute("text-anchor", "middle");
+    t.setAttribute("dominant-baseline", "middle");
+    t.setAttribute("font-family", style["font-family"] || "sans-serif");
+    t.setAttribute("font-size", style["font-size"] || 16);
+    t.setAttribute("fill", style.fill || "#000000");
+    t.setAttribute("stroke", "#ffffff");
+    t.setAttribute("stroke-width", 3);
+    t.setAttribute("stroke-linejoin", "round");
+    t.setAttribute("paint-order", "stroke");
+    t.textContent = node.label;
+    return t;
+  }
+  function connectorMidpoint(geom) {
+    if (!geom) return null;
+    if (geom.points) {
+      const pts = geom.points;
+      if (pts.length < 2) return null;
+      let total = 0;
+      for (let i = 0; i < pts.length - 1; i++) {
+        total += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+      }
+      let half = total / 2;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const [x1, y1] = pts[i], [x2, y2] = pts[i + 1];
+        const segLen = Math.hypot(x2 - x1, y2 - y1);
+        if (segLen >= half) {
+          const f = segLen === 0 ? 0 : half / segLen;
+          return { x: x1 + (x2 - x1) * f, y: y1 + (y2 - y1) * f };
+        }
+        half -= segLen;
+      }
+      const last = pts[pts.length - 1];
+      return { x: last[0], y: last[1] };
+    }
+    if (typeof geom.x1 === "number") {
+      return { x: (geom.x1 + geom.x2) / 2, y: (geom.y1 + geom.y2) / 2 };
+    }
+    return null;
   }
   function lineConnector(geom) {
     const line = document.createElementNS(SVG_NS, "line");
@@ -2231,6 +2281,18 @@
       const r3 = labelDom.getBoundingClientRect();
       return { ...base, left: `${r3.left + r3.width / 2}px`, top: `${r3.top + r3.height / 2}px` };
     }
+    if (node.type === "connector") {
+      const geom = resolveConnector(node);
+      const mid = connectorMidpoint(geom);
+      const ctmS = svg3.getScreenCTM();
+      if (mid && ctmS) {
+        const pt = svg3.createSVGPoint();
+        pt.x = mid.x;
+        pt.y = mid.y;
+        const s = pt.matrixTransform(ctmS);
+        return { ...base, left: `${s.x}px`, top: `${s.y}px` };
+      }
+    }
     const shapeDom = getDocLayer().querySelector(`[data-id="${cssEscape2(node.id)}"]`);
     if (shapeDom) {
       const r3 = shapeDom.getBoundingClientRect();
@@ -2649,6 +2711,10 @@
   var pConnectorRoute;
   var connectorDivider;
   var connectorRouteRow;
+  var pArrowStart;
+  var pArrowEnd;
+  var connectorArrowStartRow;
+  var connectorArrowEndRow;
   var clipboard = null;
   var gridApi = null;
   function mount5(root) {
@@ -2736,6 +2802,10 @@
     pConnectorRoute = root.querySelector("#p-connector-route");
     connectorDivider = root.querySelector("#connector-divider");
     connectorRouteRow = root.querySelector("#connector-route-row");
+    pArrowStart = root.querySelector("#p-arrow-start");
+    pArrowEnd = root.querySelector("#p-arrow-end");
+    connectorArrowStartRow = root.querySelector("#connector-arrow-start-row");
+    connectorArrowEndRow = root.querySelector("#connector-arrow-end-row");
     pFill.addEventListener("input", () => applyToSelection("fill", pFill.value));
     pFill.addEventListener("change", () => historyCommitAfter(() => applyToSelection("fill", pFill.value)));
     pFillNone.addEventListener("change", () => historyRecord(() => applyToSelection("fill", pFillNone.checked ? "none" : pFill.value)));
@@ -2777,6 +2847,8 @@
     pFontSize.addEventListener("pointerdown", () => beginTransaction());
     pFontFamily.addEventListener("change", () => historyRecord(() => applyFontFamily(pFontFamily.value)));
     pConnectorRoute.addEventListener("change", () => historyRecord(() => applyConnectorRoute(pConnectorRoute.value)));
+    pArrowStart.addEventListener("change", () => historyRecord(() => applyConnectorArrow("arrowStart", pArrowStart.checked)));
+    pArrowEnd.addEventListener("change", () => historyRecord(() => applyConnectorArrow("arrowEnd", pArrowEnd.checked)));
     pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
     pTextColor.addEventListener("change", () => historyCommitAfter(() => applyTextColor(pTextColor.value)));
     pRotation.addEventListener("input", () => {
@@ -2860,6 +2932,18 @@
         if (value === "orthogonal") n.route = "orthogonal";
         else delete n.route;
         delete n.waypoints;
+      }
+    });
+  }
+  function applyConnectorArrow(flag, on) {
+    const ids = [...getSelection()];
+    if (ids.length === 0) return;
+    mutate((root) => {
+      for (const id of ids) {
+        const n = findNode(root, id);
+        if (!n || n.type !== "connector") continue;
+        if (on) n[flag] = true;
+        else delete n[flag];
       }
     });
   }
@@ -2947,8 +3031,12 @@
     const showConnector = connectors.length > 0;
     if (connectorDivider) connectorDivider.hidden = !showConnector;
     if (connectorRouteRow) connectorRouteRow.hidden = !showConnector;
-    if (showConnector && pConnectorRoute) {
-      pConnectorRoute.value = connectors[0].route === "orthogonal" ? "orthogonal" : "straight";
+    if (connectorArrowStartRow) connectorArrowStartRow.hidden = !showConnector;
+    if (connectorArrowEndRow) connectorArrowEndRow.hidden = !showConnector;
+    if (showConnector) {
+      if (pConnectorRoute) pConnectorRoute.value = connectors[0].route === "orthogonal" ? "orthogonal" : "straight";
+      if (pArrowStart) pArrowStart.checked = !!connectors[0].arrowStart;
+      if (pArrowEnd) pArrowEnd.checked = !!connectors[0].arrowEnd;
     }
     let sample = null;
     for (const id of ids) {
@@ -3421,7 +3509,28 @@
       }
       if (node.arrowEnd) parts.push(`marker-end="url(#arrow-end)"`);
       if (node.arrowStart) parts.push(`marker-start="url(#arrow-start)"`);
-      return [`${pad}<${tag} ${parts.join(" ")}/>`];
+      const out = [`${pad}<${tag} ${parts.join(" ")}/>`];
+      if (node.label) {
+        const mid = connectorMidpoint(g);
+        if (mid) {
+          const style = node.labelStyle || {};
+          const lp = [
+            `x="${round3(mid.x)}"`,
+            `y="${round3(mid.y)}"`,
+            `text-anchor="middle"`,
+            `dominant-baseline="middle"`,
+            `font-family="${escapeXml(String(style["font-family"] || "sans-serif"))}"`,
+            `font-size="${round3(style["font-size"] || 16)}"`,
+            `fill="${escapeXml(String(style.fill || "#000000"))}"`,
+            `stroke="#ffffff"`,
+            `stroke-width="3"`,
+            `stroke-linejoin="round"`,
+            `paint-order="stroke"`
+          ];
+          out.push(`${pad}<text ${lp.join(" ")}>${escapeXmlText(String(node.label))}</text>`);
+        }
+      }
+      return out;
     }
     const attrs = buildAttrs(node);
     const attrStr = attrs.length ? " " + attrs.join(" ") : "";
