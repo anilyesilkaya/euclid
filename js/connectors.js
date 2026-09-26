@@ -107,13 +107,15 @@ function elbowPoints(a, dirA, b, dirB) {
 function approx(a, b) { return Math.abs(a - b) < 1e-6; }
 
 // Drop coincident points and collapse three collinear points to two, so the
-// emitted polyline carries only real corners.
+// emitted polyline carries only real corners. Each point may carry a `seg` tag
+// (the anchor-interval index of the segment arriving at it); it's preserved so
+// callers can map a rendered segment back to a waypoint insert position.
 function cleanPath(pts) {
   const dedup = [];
   for (const p of pts) {
     const last = dedup[dedup.length - 1];
     if (last && approx(last.x, p.x) && approx(last.y, p.y)) continue;
-    dedup.push({ x: p.x, y: p.y });
+    dedup.push({ x: p.x, y: p.y, seg: p.seg });
   }
   const out = [];
   for (let i = 0; i < dedup.length; i++) {
@@ -147,23 +149,31 @@ export function routeOrthogonal(fromBox, toBox, fromPt, toPt, waypoints) {
   const b = toBox ? orthExit(toBox, lastTarget) : { pt: toPt, dir: dirToward(toPt, lastTarget) };
   if (!a.pt || !b.pt) return { valid: false };
 
+  // Build the raw corner list, tagging each point with `seg` = the anchor
+  // interval its arriving segment lies in. Interval i sits between anchors[i]
+  // and anchors[i+1]; a point dropped on a segment in interval i inserts at
+  // waypoint index i (waypoints are anchors[1..wps.length]).
   let raw;
   if (wps.length === 0) {
-    raw = elbowPoints(a.pt, a.dir, b.pt, b.dir);
+    raw = elbowPoints(a.pt, a.dir, b.pt, b.dir).map(p => ({ ...p, seg: 0 }));
   } else {
-    // Chain A → waypoints → B, orthogonalizing each leg with an alternating
-    // staircase corner so no segment runs diagonally.
     const anchors = [a.pt, ...wps, b.pt];
-    raw = [anchors[0]];
+    raw = [{ x: anchors[0].x, y: anchors[0].y, seg: 0 }];
     for (let i = 0; i < anchors.length - 1; i++) {
       const p = anchors[i], q = anchors[i + 1];
       if (!approx(p.x, q.x) && !approx(p.y, q.y)) {
-        raw.push(i % 2 === 0 ? { x: q.x, y: p.y } : { x: p.x, y: q.y });
+        const c = i % 2 === 0 ? { x: q.x, y: p.y } : { x: p.x, y: q.y };
+        raw.push({ ...c, seg: i });
       }
-      raw.push(q);
+      raw.push({ x: q.x, y: q.y, seg: i });
     }
   }
 
-  const points = cleanPath(raw).map(p => [p.x, p.y]);
-  return { points, valid: true };
+  const clean = cleanPath(raw);
+  const points = clean.map(p => [p.x, p.y]);
+  // segInsert[i] = waypoint insert index for a point dropped on segment i
+  // (between points[i] and points[i+1]); taken from the segment's end tag.
+  const segInsert = [];
+  for (let i = 1; i < clean.length; i++) segInsert.push(clean[i].seg ?? wps.length);
+  return { points, segInsert, valid: true };
 }

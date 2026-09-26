@@ -185,7 +185,7 @@
     for (const p of pts) {
       const last = dedup[dedup.length - 1];
       if (last && approx(last.x, p.x) && approx(last.y, p.y)) continue;
-      dedup.push({ x: p.x, y: p.y });
+      dedup.push({ x: p.x, y: p.y, seg: p.seg });
     }
     const out = [];
     for (let i = 0; i < dedup.length; i++) {
@@ -213,20 +213,24 @@
     if (!a.pt || !b.pt) return { valid: false };
     let raw;
     if (wps.length === 0) {
-      raw = elbowPoints(a.pt, a.dir, b.pt, b.dir);
+      raw = elbowPoints(a.pt, a.dir, b.pt, b.dir).map((p) => ({ ...p, seg: 0 }));
     } else {
       const anchors = [a.pt, ...wps, b.pt];
-      raw = [anchors[0]];
+      raw = [{ x: anchors[0].x, y: anchors[0].y, seg: 0 }];
       for (let i = 0; i < anchors.length - 1; i++) {
         const p = anchors[i], q = anchors[i + 1];
         if (!approx(p.x, q.x) && !approx(p.y, q.y)) {
-          raw.push(i % 2 === 0 ? { x: q.x, y: p.y } : { x: p.x, y: q.y });
+          const c = i % 2 === 0 ? { x: q.x, y: p.y } : { x: p.x, y: q.y };
+          raw.push({ ...c, seg: i });
         }
-        raw.push(q);
+        raw.push({ x: q.x, y: q.y, seg: i });
       }
     }
-    const points = cleanPath(raw).map((p) => [p.x, p.y]);
-    return { points, valid: true };
+    const clean = cleanPath(raw);
+    const points = clean.map((p) => [p.x, p.y]);
+    const segInsert = [];
+    for (let i = 1; i < clean.length; i++) segInsert.push(clean[i].seg ?? wps.length);
+    return { points, segInsert, valid: true };
   }
 
   // js/render.js
@@ -483,7 +487,7 @@
     }
     if (boxes.length === 0) return;
     if (boxes.length === 1 && boxes[0].el.hasAttribute("data-connector")) {
-      drawConnectorSelection(boxes[0]);
+      drawConnectorSelection(boxes[0].id, boxes[0].el);
       return;
     }
     if (boxes.length === 1) {
@@ -492,7 +496,8 @@
       drawMultiSelectionChrome(boxes);
     }
   }
-  function drawConnectorSelection({ el }) {
+  var WAYPOINT_MIN_SEG = 12;
+  function drawConnectorSelection(id, el) {
     const isPolyline = el.tagName.toLowerCase() === "polyline";
     const overlay = document.createElementNS(SVG_NS, isPolyline ? "polyline" : "line");
     overlay.setAttribute("class", "connector-selected");
@@ -506,6 +511,44 @@
       overlay.setAttribute("y2", el.getAttribute("y2"));
     }
     chromeSelection.appendChild(overlay);
+    const node = findNode(getDoc(), id);
+    if (!node || node.route !== "orthogonal") return;
+    const geom = resolveConnector(node);
+    if (!geom || !geom.valid || !geom.points) return;
+    const scale = canvasPixelScale();
+    const hs = HANDLE_SIZE * scale;
+    const wps = Array.isArray(node.waypoints) ? node.waypoints : [];
+    wps.forEach((w, i) => {
+      if (!w || !isFinite(w.x) || !isFinite(w.y)) return;
+      const h = document.createElementNS(SVG_NS, "rect");
+      h.setAttribute("class", "waypoint-handle");
+      h.setAttribute("data-role", "waypoint");
+      h.setAttribute("data-id", id);
+      h.setAttribute("data-index", i);
+      h.setAttribute("x", w.x - hs / 2);
+      h.setAttribute("y", w.y - hs / 2);
+      h.setAttribute("width", hs);
+      h.setAttribute("height", hs);
+      chromeSelection.appendChild(h);
+    });
+    const pts = geom.points;
+    const segInsert = geom.segInsert || [];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x1, y1] = pts[i];
+      const [x2, y2] = pts[i + 1];
+      if (Math.hypot(x2 - x1, y2 - y1) < WAYPOINT_MIN_SEG) continue;
+      const mx = (x1 + x2) / 2;
+      const my = (y1 + y2) / 2;
+      const c = document.createElementNS(SVG_NS, "circle");
+      c.setAttribute("class", "waypoint-add-handle");
+      c.setAttribute("data-role", "waypoint-add");
+      c.setAttribute("data-id", id);
+      c.setAttribute("data-insert", segInsert[i] ?? wps.length);
+      c.setAttribute("cx", mx);
+      c.setAttribute("cy", my);
+      c.setAttribute("r", hs / 2);
+      chromeSelection.appendChild(c);
+    }
   }
   function drawSingleSelectionChrome({ id, el, box }) {
     const wrap = document.createElementNS(SVG_NS, "g");
@@ -1067,6 +1110,7 @@
     if (role === "resize") return startResize(e, target, p);
     if (role === "resize-multi") return startResizeMulti(e, target, p);
     if (role === "rotate") return startRotate(e, target, p);
+    if (role === "waypoint" || role === "waypoint-add") return startWaypointDrag(e, target, p);
     if (currentTool === "select") return handleSelectDown(e, p, target);
     if (currentTool === "polyline") return handlePolylineDown(e, p);
     if (currentTool === "text") return handleTextDown(e, p);
@@ -1104,6 +1148,8 @@
       updateResize(p, e);
     } else if (gesture.type === "rotate") {
       updateRotate(p, e);
+    } else if (gesture.type === "waypoint") {
+      updateWaypoint(p, e);
     } else if (gesture.type === "marquee") {
       updateMarquee(p);
     } else if (gesture.type === "connector") {
@@ -1116,7 +1162,7 @@
       return;
     }
     const role = e.target.getAttribute && e.target.getAttribute("data-role");
-    if (role === "resize" || role === "resize-multi" || role === "rotate") {
+    if (role === "resize" || role === "resize-multi" || role === "rotate" || role === "waypoint" || role === "waypoint-add") {
       setHover(null);
       return;
     }
@@ -1153,6 +1199,9 @@
       if (g.moved) commit(g.type);
       else abort();
       if (g.type === "rotate") hideRotationReadout();
+    } else if (g.type === "waypoint") {
+      if (g.moved) commit("waypoint");
+      else abort();
     }
     clearTransient();
   }
@@ -1174,6 +1223,11 @@
   function onDoubleClick(e) {
     if (polylineInProgress) {
       commitPolyline();
+      return;
+    }
+    const role = e.target.getAttribute && e.target.getAttribute("data-role");
+    if (role === "waypoint") {
+      deleteWaypoint(e.target.getAttribute("data-id"), Number(e.target.getAttribute("data-index")));
       return;
     }
     if (currentTool !== "select") return;
@@ -1582,6 +1636,54 @@
   }
   function clearConnectTargetHighlight() {
     clearHoverOutline();
+  }
+  function startWaypointDrag(e, handleEl, p) {
+    const id = handleEl.getAttribute("data-id");
+    const node = findNode(getDoc(), id);
+    if (!node || node.type !== "connector") return;
+    const isAdd = handleEl.getAttribute("data-role") === "waypoint-add";
+    beginTransaction();
+    gesture = {
+      type: "waypoint",
+      origin: p,
+      last: p,
+      moved: false,
+      connectorId: id,
+      index: isAdd ? Number(handleEl.getAttribute("data-insert")) : Number(handleEl.getAttribute("data-index")),
+      pendingInsert: isAdd
+      // true until the first move materializes the waypoint
+    };
+  }
+  function updateWaypoint(p, e) {
+    let pt = p;
+    if (isSnap() && !e?.altKey) pt = snapPoint(p.x, p.y);
+    const { connectorId, index } = gesture;
+    mutate((root) => {
+      const n = findNode(root, connectorId);
+      if (!n) return;
+      if (!Array.isArray(n.waypoints)) n.waypoints = [];
+      if (gesture.pendingInsert) {
+        n.waypoints.splice(index, 0, { x: round2(pt.x), y: round2(pt.y) });
+        gesture.pendingInsert = false;
+      } else {
+        if (!n.waypoints[index]) n.waypoints[index] = { x: 0, y: 0 };
+        n.waypoints[index].x = round2(pt.x);
+        n.waypoints[index].y = round2(pt.y);
+      }
+    });
+  }
+  function deleteWaypoint(id, index) {
+    const node = findNode(getDoc(), id);
+    if (!node || !Array.isArray(node.waypoints)) return;
+    if (index < 0 || index >= node.waypoints.length) return;
+    record(() => {
+      mutate((root) => {
+        const n = findNode(root, id);
+        if (!n || !Array.isArray(n.waypoints)) return;
+        n.waypoints.splice(index, 1);
+        if (n.waypoints.length === 0) delete n.waypoints;
+      });
+    });
   }
   function handlePolylineDown(e, p) {
     if (!polylineInProgress) {

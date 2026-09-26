@@ -47,13 +47,17 @@ save/open format with debounced autosave.
 
 ## Phase 2 — draw.io diagramming
 
-- **M4 — Orthogonal (elbow) connector routing + waypoints.** 🚧 *In progress.*
-  Orthogonal routing has landed: `routeOrthogonal` in `connectors.js` exits each
-  attached shape from the box edge facing the far end and joins the exits with
-  axis-aligned legs (L or S). A per-connector `route` flag (default `"straight"`)
-  drives render (`<polyline>`), export, and selection chrome; the property panel
-  gains a **CONNECTOR → Routing** dropdown. The router already honors optional
-  stored `waypoints`; interactive waypoint editing is the remaining piece.
+- **M4 — Orthogonal (elbow) connector routing + waypoints.** ✅ **Done.**
+  `routeOrthogonal` in `connectors.js` exits each attached shape from the box
+  edge facing the far end and joins the exits with axis-aligned legs (L or S). A
+  per-connector `route` flag (default `"straight"`) drives render (`<polyline>`),
+  export, and selection chrome; the property panel has a **CONNECTOR → Routing**
+  dropdown. Orthogonal connectors are editable: drag a segment-midpoint handle to
+  bend the path (inserts an ordered `waypoint`), drag a waypoint handle to move
+  it, double-click to delete. Waypoint gestures grid-snap (Alt bypasses) and
+  commit one history entry; switching routing clears waypoints. Geometry is still
+  never stored beyond the `route` flag + `waypoints` — edges re-route from live
+  shape boxes on move/resize/rotate.
 - **M5 — Connector labels + arrowhead UI.** Expose the existing
   `arrowStart` / `arrowEnd` model flags in the panel, plus a mid-edge label
   (reuse the label editor from `tools.js`).

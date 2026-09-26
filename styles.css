@@ -208,6 +208,29 @@ html, body {
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
+/* Orthogonal-connector waypoint editing. Solid square = stored waypoint (drag to
+   move, double-click to delete); hollow circle = segment midpoint (drag to bend,
+   inserting a new waypoint). */
+#chrome-layer .waypoint-handle {
+  fill: var(--handle);
+  stroke: var(--handle-stroke);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  cursor: move;
+}
+#chrome-layer .waypoint-add-handle {
+  fill: var(--bg);
+  fill-opacity: 0.6;
+  stroke: var(--handle-stroke);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 1.5;
+  vector-effect: non-scaling-stroke;
+  cursor: copy;
+}
+#chrome-layer .waypoint-add-handle:hover {
+  fill: var(--accent);
+  fill-opacity: 0.9;
+}
 #chrome-layer .hover-outline {
   fill: none;
   stroke: var(--accent);
