@@ -45,3 +45,135 @@ export function routeStraight(fromBox, toBox, fromPt, toPt) {
 
   return { x1: from.x, y1: from.y, x2: to.x, y2: to.y, valid: true };
 }
+
+// --- Orthogonal (elbow) routing ---------------------------------------------
+//
+// Route two endpoints with axis-aligned segments (draw.io "orthogonal" edges).
+// Each attached endpoint leaves from the midpoint of the box edge that faces the
+// far endpoint (or the nearest waypoint); the exit points are then joined by
+// horizontal/vertical legs. Optional `waypoints` ([{x,y},...] in canvas space)
+// force the path through fixed points — the interactive-drag layer (M4 part 2)
+// stores them; part 1 already honors them if present.
+//
+// Returns { points: [[x,y],...], valid }. `points` always has ≥2 entries.
+
+// Midpoint of the box edge facing `toward`, plus the exit direction (n/s/e/w).
+function orthExit(box, toward) {
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const dx = toward.x - cx;
+  const dy = toward.y - cy;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0
+      ? { pt: { x: box.x + box.width, y: cy }, dir: "e" }
+      : { pt: { x: box.x, y: cy }, dir: "w" };
+  }
+  return dy >= 0
+    ? { pt: { x: cx, y: box.y + box.height }, dir: "s" }
+    : { pt: { x: cx, y: box.y }, dir: "n" };
+}
+
+// Dominant-axis direction from `from` toward `to` — used for free (unattached)
+// endpoints, which have no box edge to exit from.
+function dirToward(from, to) {
+  const dx = (to?.x ?? from.x) - from.x;
+  const dy = (to?.y ?? from.y) - from.y;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "e" : "w";
+  return dy >= 0 ? "s" : "n";
+}
+
+// Corner sequence joining exit A (leaving along dirA) to exit B (leaving along
+// dirB). Same exit axis → an S-shape through the midline; differing axes → a
+// single-corner L. Returns {x,y} points including both endpoints.
+function elbowPoints(a, dirA, b, dirB) {
+  const horizA = dirA === "e" || dirA === "w";
+  const horizB = dirB === "e" || dirB === "w";
+  const pts = [a];
+  if (horizA && horizB) {
+    const midX = (a.x + b.x) / 2;
+    pts.push({ x: midX, y: a.y }, { x: midX, y: b.y });
+  } else if (!horizA && !horizB) {
+    const midY = (a.y + b.y) / 2;
+    pts.push({ x: a.x, y: midY }, { x: b.x, y: midY });
+  } else if (horizA && !horizB) {
+    pts.push({ x: b.x, y: a.y });
+  } else {
+    pts.push({ x: a.x, y: b.y });
+  }
+  pts.push(b);
+  return pts;
+}
+
+function approx(a, b) { return Math.abs(a - b) < 1e-6; }
+
+// Drop coincident points and collapse three collinear points to two, so the
+// emitted polyline carries only real corners. Each point may carry a `seg` tag
+// (the anchor-interval index of the segment arriving at it); it's preserved so
+// callers can map a rendered segment back to a waypoint insert position.
+function cleanPath(pts) {
+  const dedup = [];
+  for (const p of pts) {
+    const last = dedup[dedup.length - 1];
+    if (last && approx(last.x, p.x) && approx(last.y, p.y)) continue;
+    dedup.push({ x: p.x, y: p.y, seg: p.seg });
+  }
+  const out = [];
+  for (let i = 0; i < dedup.length; i++) {
+    const prev = out[out.length - 1];
+    const cur = dedup[i];
+    const next = dedup[i + 1];
+    if (prev && next) {
+      const collinearH = approx(prev.y, cur.y) && approx(cur.y, next.y);
+      const collinearV = approx(prev.x, cur.x) && approx(cur.x, next.x);
+      if (collinearH || collinearV) continue; // redundant midpoint on a straight leg
+    }
+    out.push(cur);
+  }
+  return out.length >= 2 ? out : dedup;
+}
+
+export function routeOrthogonal(fromBox, toBox, fromPt, toPt, waypoints) {
+  const fromCenter = fromBox ? centerOf(fromBox) : fromPt;
+  const toCenter = toBox ? centerOf(toBox) : toPt;
+  if (!fromCenter || !toCenter) return { valid: false };
+
+  const wps = Array.isArray(waypoints)
+    ? waypoints.filter(w => w && isFinite(w.x) && isFinite(w.y))
+    : [];
+
+  // Aim each exit at the nearest fixed target (first/last waypoint, else the
+  // opposite end's center) so the connector leaves toward where it's going.
+  const firstTarget = wps.length ? wps[0] : toCenter;
+  const lastTarget = wps.length ? wps[wps.length - 1] : fromCenter;
+  const a = fromBox ? orthExit(fromBox, firstTarget) : { pt: fromPt, dir: dirToward(fromPt, firstTarget) };
+  const b = toBox ? orthExit(toBox, lastTarget) : { pt: toPt, dir: dirToward(toPt, lastTarget) };
+  if (!a.pt || !b.pt) return { valid: false };
+
+  // Build the raw corner list, tagging each point with `seg` = the anchor
+  // interval its arriving segment lies in. Interval i sits between anchors[i]
+  // and anchors[i+1]; a point dropped on a segment in interval i inserts at
+  // waypoint index i (waypoints are anchors[1..wps.length]).
+  let raw;
+  if (wps.length === 0) {
+    raw = elbowPoints(a.pt, a.dir, b.pt, b.dir).map(p => ({ ...p, seg: 0 }));
+  } else {
+    const anchors = [a.pt, ...wps, b.pt];
+    raw = [{ x: anchors[0].x, y: anchors[0].y, seg: 0 }];
+    for (let i = 0; i < anchors.length - 1; i++) {
+      const p = anchors[i], q = anchors[i + 1];
+      if (!approx(p.x, q.x) && !approx(p.y, q.y)) {
+        const c = i % 2 === 0 ? { x: q.x, y: p.y } : { x: p.x, y: q.y };
+        raw.push({ ...c, seg: i });
+      }
+      raw.push({ x: q.x, y: q.y, seg: i });
+    }
+  }
+
+  const clean = cleanPath(raw);
+  const points = clean.map(p => [p.x, p.y]);
+  // segInsert[i] = waypoint insert index for a point dropped on segment i
+  // (between points[i] and points[i+1]); taken from the segment's end tag.
+  const segInsert = [];
+  for (let i = 1; i < clean.length; i++) segInsert.push(clean[i].seg ?? wps.length);
+  return { points, segInsert, valid: true };
+}

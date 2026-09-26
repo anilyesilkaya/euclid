@@ -88,6 +88,7 @@ function onPointerDown(e) {
   if (role === "resize") return startResize(e, target, p);
   if (role === "resize-multi") return startResizeMulti(e, target, p);
   if (role === "rotate") return startRotate(e, target, p);
+  if (role === "waypoint" || role === "waypoint-add") return startWaypointDrag(e, target, p);
 
   if (currentTool === "select") return handleSelectDown(e, p, target);
 
@@ -137,6 +138,8 @@ function onPointerMove(e) {
     updateResize(p, e);
   } else if (gesture.type === "rotate") {
     updateRotate(p, e);
+  } else if (gesture.type === "waypoint") {
+    updateWaypoint(p, e);
   } else if (gesture.type === "marquee") {
     updateMarquee(p);
   } else if (gesture.type === "connector") {
@@ -148,7 +151,8 @@ function onPointerMove(e) {
 function updateHover(e) {
   if (currentTool !== "select") { setHover(null); return; }
   const role = e.target.getAttribute && e.target.getAttribute("data-role");
-  if (role === "resize" || role === "resize-multi" || role === "rotate") { setHover(null); return; }
+  if (role === "resize" || role === "resize-multi" || role === "rotate" ||
+      role === "waypoint" || role === "waypoint-add") { setHover(null); return; }
   const hit = hitTest(e.target);
   const id = hit ? pickSelectionId(hit.id) : null;
   setHover(id);
@@ -188,6 +192,11 @@ function onPointerUp(e) {
     if (g.moved) history.commit(g.type);
     else history.abort();
     if (g.type === "rotate") hideRotationReadout();
+  } else if (g.type === "waypoint") {
+    // A real drag committed a moved/inserted waypoint; a click that never
+    // crossed the threshold inserted nothing, so drop the transaction.
+    if (g.moved) history.commit("waypoint");
+    else history.abort();
   }
 
   clearTransient();
@@ -207,6 +216,14 @@ function onContextMenu(e) {
 function onDoubleClick(e) {
   if (polylineInProgress) {
     commitPolyline();
+    return;
+  }
+  // Double-clicking a waypoint handle removes that waypoint. Checked before the
+  // select-tool gate so it works whenever the handle is visible (a connector is
+  // selected), matching waypoint-drag which is tool-independent.
+  const role = e.target.getAttribute && e.target.getAttribute("data-role");
+  if (role === "waypoint") {
+    deleteWaypoint(e.target.getAttribute("data-id"), Number(e.target.getAttribute("data-index")));
     return;
   }
   if (currentTool !== "select") return;
@@ -675,6 +692,63 @@ function highlightConnectTarget(id) {
 }
 function clearConnectTargetHighlight() {
   clearHoverOutline();
+}
+
+// --- Connector waypoints (orthogonal routes) ---
+//
+// Two handle kinds sit on a selected orthogonal connector: a `waypoint` handle
+// over each stored waypoint (drag to move) and a `waypoint-add` handle at each
+// segment midpoint (drag to bend — inserts a new waypoint at that leg's ordered
+// position). Both share one gesture; an "add" defers the actual insert until the
+// drag threshold is crossed so a stray click doesn't litter waypoints.
+function startWaypointDrag(e, handleEl, p) {
+  const id = handleEl.getAttribute("data-id");
+  const node = findNode(getDoc(), id);
+  if (!node || node.type !== "connector") return;
+  const isAdd = handleEl.getAttribute("data-role") === "waypoint-add";
+  history.beginTransaction();
+  gesture = {
+    type: "waypoint",
+    origin: p, last: p, moved: false,
+    connectorId: id,
+    index: isAdd ? Number(handleEl.getAttribute("data-insert")) : Number(handleEl.getAttribute("data-index")),
+    pendingInsert: isAdd, // true until the first move materializes the waypoint
+  };
+}
+
+function updateWaypoint(p, e) {
+  // Snap to grid unless Alt bypasses it (same convention as move/resize).
+  let pt = p;
+  if (grid.isSnap() && !e?.altKey) pt = grid.snapPoint(p.x, p.y);
+  const { connectorId, index } = gesture;
+  mutate((root) => {
+    const n = findNode(root, connectorId);
+    if (!n) return;
+    if (!Array.isArray(n.waypoints)) n.waypoints = [];
+    if (gesture.pendingInsert) {
+      n.waypoints.splice(index, 0, { x: round2(pt.x), y: round2(pt.y) });
+      gesture.pendingInsert = false;
+    } else {
+      if (!n.waypoints[index]) n.waypoints[index] = { x: 0, y: 0 };
+      n.waypoints[index].x = round2(pt.x);
+      n.waypoints[index].y = round2(pt.y);
+    }
+  });
+}
+
+// Double-click a waypoint handle to remove that waypoint.
+function deleteWaypoint(id, index) {
+  const node = findNode(getDoc(), id);
+  if (!node || !Array.isArray(node.waypoints)) return;
+  if (index < 0 || index >= node.waypoints.length) return;
+  history.record(() => {
+    mutate((root) => {
+      const n = findNode(root, id);
+      if (!n || !Array.isArray(n.waypoints)) return;
+      n.waypoints.splice(index, 1);
+      if (n.waypoints.length === 0) delete n.waypoints;
+    });
+  });
 }
 
 // --- Polyline (click-based) ---

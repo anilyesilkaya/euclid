@@ -2,8 +2,8 @@
 // Wipe-and-rebuild strategy: cheap at 100-500 nodes, avoids a whole class of diff bugs.
 // Event listeners are delegated on #canvas, so losing per-element refs is fine.
 
-import { getDoc, getSelection } from "./state.js";
-import { routeStraight } from "./connectors.js";
+import { getDoc, getSelection, findNode } from "./state.js";
+import { routeStraight, routeOrthogonal } from "./connectors.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const HANDLE_SIZE = 8;      // px in screen space (via non-scaling stroke + fixed size)
@@ -80,29 +80,45 @@ function renderDoc() {
   }
 }
 
-// Resolve + build a connector's <line>. Returns null if it can't be routed
-// (e.g. an attached shape was deleted) so a broken edge simply doesn't draw.
+// Resolve + build a connector element. Orthogonal routes render as a <polyline>
+// (multi-segment); straight routes as a <line>. Returns null if it can't be
+// routed (e.g. an attached shape was deleted) so a broken edge simply doesn't draw.
 function connectorElement(node) {
   const geom = resolveConnector(node);
   if (!geom || !geom.valid) return null;
+  const el = geom.points
+    ? polylineConnector(geom.points)
+    : lineConnector(geom);
+  el.setAttribute("data-id", node.id);
+  el.setAttribute("data-connector", "1");
+  for (const [k, v] of Object.entries(node.attrs || {})) {
+    if (v === undefined || v === null || v === "") continue;
+    el.setAttribute(k, formatAttr(k, v));
+  }
+  if (node.arrowEnd) el.setAttribute("marker-end", "url(#arrow-end)");
+  if (node.arrowStart) el.setAttribute("marker-start", "url(#arrow-start)");
+  return el;
+}
+
+function lineConnector(geom) {
   const line = document.createElementNS(SVG_NS, "line");
-  line.setAttribute("data-id", node.id);
-  line.setAttribute("data-connector", "1");
   line.setAttribute("x1", round(geom.x1));
   line.setAttribute("y1", round(geom.y1));
   line.setAttribute("x2", round(geom.x2));
   line.setAttribute("y2", round(geom.y2));
-  for (const [k, v] of Object.entries(node.attrs || {})) {
-    if (v === undefined || v === null || v === "") continue;
-    line.setAttribute(k, formatAttr(k, v));
-  }
-  if (node.arrowEnd) line.setAttribute("marker-end", "url(#arrow-end)");
-  if (node.arrowStart) line.setAttribute("marker-start", "url(#arrow-start)");
   return line;
+}
+
+function polylineConnector(points) {
+  const pl = document.createElementNS(SVG_NS, "polyline");
+  pl.setAttribute("points", points.map(([x, y]) => `${round(x)},${round(y)}`).join(" "));
+  pl.setAttribute("fill", "none");
+  return pl;
 }
 
 // Endpoint box lookup: an attached endpoint ({ref}) resolves to that shape's
 // current canvas-space AABB; a free endpoint ({x,y}) resolves to a point.
+// Routing mode is chosen by node.route ("orthogonal" → elbow, else straight).
 export function resolveConnector(node) {
   const end = (e) => {
     if (e && e.ref != null) {
@@ -116,6 +132,9 @@ export function resolveConnector(node) {
   const a = end(node.from);
   const b = end(node.to);
   if (a.missing || b.missing) return { valid: false };
+  if (node.route === "orthogonal") {
+    return routeOrthogonal(a.box, b.box, a.pt, b.pt, node.waypoints);
+  }
   return routeStraight(a.box, b.box, a.pt, b.pt);
 }
 
@@ -275,7 +294,7 @@ function renderSelection() {
   // A lone selected connector gets a highlight overlay, not box/handles — its
   // geometry is derived, so resize/rotate/move handles would be meaningless.
   if (boxes.length === 1 && boxes[0].el.hasAttribute("data-connector")) {
-    drawConnectorSelection(boxes[0]);
+    drawConnectorSelection(boxes[0].id, boxes[0].el);
     return;
   }
 
@@ -288,14 +307,70 @@ function renderSelection() {
   }
 }
 
-function drawConnectorSelection({ el }) {
-  const overlay = document.createElementNS(SVG_NS, "line");
+const WAYPOINT_MIN_SEG = 12; // canvas units — don't offer an add-handle on a tiny leg
+
+function drawConnectorSelection(id, el) {
+  // Mirror the connector's own element type so the highlight traces every leg
+  // of an orthogonal route, not just its endpoints.
+  const isPolyline = el.tagName.toLowerCase() === "polyline";
+  const overlay = document.createElementNS(SVG_NS, isPolyline ? "polyline" : "line");
   overlay.setAttribute("class", "connector-selected");
-  overlay.setAttribute("x1", el.getAttribute("x1"));
-  overlay.setAttribute("y1", el.getAttribute("y1"));
-  overlay.setAttribute("x2", el.getAttribute("x2"));
-  overlay.setAttribute("y2", el.getAttribute("y2"));
+  if (isPolyline) {
+    overlay.setAttribute("points", el.getAttribute("points"));
+    overlay.setAttribute("fill", "none");
+  } else {
+    overlay.setAttribute("x1", el.getAttribute("x1"));
+    overlay.setAttribute("y1", el.getAttribute("y1"));
+    overlay.setAttribute("x2", el.getAttribute("x2"));
+    overlay.setAttribute("y2", el.getAttribute("y2"));
+  }
   chromeSelection.appendChild(overlay);
+
+  // Orthogonal connectors get editable waypoint handles: a solid square at each
+  // stored waypoint (drag to move, double-click to delete) and a hollow circle
+  // at each segment midpoint (drag to bend — inserts a new waypoint).
+  const node = findNode(getDoc(), id);
+  if (!node || node.route !== "orthogonal") return;
+  const geom = resolveConnector(node);
+  if (!geom || !geom.valid || !geom.points) return;
+  const scale = canvasPixelScale();
+  const hs = HANDLE_SIZE * scale;
+
+  // Stored-waypoint move handles.
+  const wps = Array.isArray(node.waypoints) ? node.waypoints : [];
+  wps.forEach((w, i) => {
+    if (!w || !isFinite(w.x) || !isFinite(w.y)) return;
+    const h = document.createElementNS(SVG_NS, "rect");
+    h.setAttribute("class", "waypoint-handle");
+    h.setAttribute("data-role", "waypoint");
+    h.setAttribute("data-id", id);
+    h.setAttribute("data-index", i);
+    h.setAttribute("x", w.x - hs / 2);
+    h.setAttribute("y", w.y - hs / 2);
+    h.setAttribute("width", hs);
+    h.setAttribute("height", hs);
+    chromeSelection.appendChild(h);
+  });
+
+  // Segment-midpoint add handles.
+  const pts = geom.points;
+  const segInsert = geom.segInsert || [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [x1, y1] = pts[i];
+    const [x2, y2] = pts[i + 1];
+    if (Math.hypot(x2 - x1, y2 - y1) < WAYPOINT_MIN_SEG) continue;
+    const mx = (x1 + x2) / 2;
+    const my = (y1 + y2) / 2;
+    const c = document.createElementNS(SVG_NS, "circle");
+    c.setAttribute("class", "waypoint-add-handle");
+    c.setAttribute("data-role", "waypoint-add");
+    c.setAttribute("data-id", id);
+    c.setAttribute("data-insert", segInsert[i] ?? wps.length);
+    c.setAttribute("cx", mx);
+    c.setAttribute("cy", my);
+    c.setAttribute("r", hs / 2);
+    chromeSelection.appendChild(c);
+  }
 }
 
 function drawSingleSelectionChrome({ id, el, box }) {
