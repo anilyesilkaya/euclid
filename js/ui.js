@@ -5,11 +5,11 @@ import {
   mutate, newId, findNode, findParent, findPath, walk, removeByIds, emptyTransform,
 } from "./state.js";
 import * as history from "./history.js";
-import { setTool, getTool, cancelPolyline, isTextEditing, openLabelEditor } from "./tools.js";
+import { setTool, getTool, cancelPolyline, cancelPen, finishPen, isTextEditing, openLabelEditor } from "./tools.js";
 import { align } from "./align.js";
 import * as persist from "./persist.js";
 
-const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", t: "text", x: "connector" };
+const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", n: "pen", t: "text", x: "connector" };
 
 let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity, pOpacityNum;
 let pText, pFontSize, pFontFamily, pTextColor, pRotation;
@@ -500,8 +500,12 @@ function wireKeyboard() {
       if (TOOL_KEYS[k]) { setTool(TOOL_KEYS[k]); e.preventDefault(); return; }
     }
 
+    // Enter finalizes an in-progress pen path without leaving the tool.
+    if (e.key === "Enter" && finishPen()) { e.preventDefault(); return; }
+
     if (e.key === "Escape") {
       cancelPolyline();
+      cancelPen();
       setTool("select");
       clearSelection();
       e.preventDefault(); return;

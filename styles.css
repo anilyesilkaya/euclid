@@ -356,6 +356,11 @@ html, body {
   justify-items: start;
   color: var(--text-dim);
 }
+/* The `display: grid` rules above out-specify the UA `[hidden]{display:none}`,
+   so hidden rows (e.g. connector-only fields) would otherwise still show.
+   Re-assert hidden here with matching specificity. */
+#props-form label[hidden],
+#props-form .props-divider[hidden] { display: none; }
 #props-form input[type="color"] {
   width: 44px; height: 24px; padding: 0; border: 1px solid var(--border); background: transparent;
 }

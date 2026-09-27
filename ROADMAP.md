@@ -70,9 +70,21 @@ save/open format with debounced autosave.
 
 ## Phase 3 — Illustrator vector editing
 
-- **M6 — Pen / bézier path tool + path-point editing.** A real `path` drawing
-  tool and node editing (the `path` type already renders / imports; add
-  creation and anchor / handle manipulation in `tools.js` + `render.js`).
+- **M6 — Pen / bézier path tool + path-point editing.** 🚧 **In progress.**
+  - **Part 1 — Pen tool + structured path model.** ✅ **Done.** A **Pen (N)**
+    tool builds a real `path` from a structured anchor model
+    (`node.anchors: [{x, y, cin?, cout?}]` + `node.closed`, in `js/paths.js`);
+    click drops a corner anchor, click-drag pulls a symmetric bézier handle
+    (smooth point). Clicking the first anchor closes the path; Enter / double-click
+    finalizes; Escape / tool-switch also finalizes a valid path. The SVG `d` is
+    *derived* from anchors at render/export (`anchorsToPath`) — never stored — so
+    imported raw-`d` paths keep working untouched, and node editing (part 2) only
+    mutates anchors. Anchors grid-snap (Alt bypass) and the whole session is one
+    history entry. (Also fixed a latent CSS bug where `#props-form label`'s
+    `display:grid` out-specified `[hidden]`, leaking the connector-only rows into
+    every selection's property panel.)
+  - **Part 2 — Node / anchor / handle editing.** ⏳ Direct manipulation of an
+    existing path's anchors and bézier handles in the selection chrome.
 - **M7 — Gradients.** A paint-server model (currently rejected on import by
   design in `import.js`), fill / stroke gradient UI, and export / import support.
 - **M10 — Illustrator-style rotate + copy and "Transform Again."** Make the

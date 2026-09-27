@@ -3,6 +3,7 @@
 
 import { getDoc } from "./state.js";
 import { elementBBoxInCanvas, resolveConnector, connectorMidpoint } from "./render.js";
+import { anchorsToPath, anchorsBBox } from "./paths.js";
 
 const DEFAULT_VIEWBOX = { x: 0, y: 0, width: 1000, height: 700 };
 const TIGHT_PADDING = 8;
@@ -243,6 +244,9 @@ function localBBoxOfNode(node) {
     }
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
   }
+  if (node.type === "path" && Array.isArray(node.anchors) && node.anchors.length) {
+    return anchorsBBox(node.anchors);
+  }
   if (node.type === "text") {
     const size = a["font-size"] || 16;
     const w = String(node.text || "").length * size * 0.6;
@@ -259,13 +263,21 @@ function buildAttrs(node) {
   const attrs = [];
   const emit = (k, v) => attrs.push(`${k}="${formatValue(k, v)}"`);
 
+  // Pen-drawn paths derive `d` from the structured anchor model — the stored
+  // attrs.d (if any) is stale, so emit the freshly computed geometry instead.
+  const derivedD = node.type === "path" && Array.isArray(node.anchors)
+    ? anchorsToPath(node.anchors, node.closed)
+    : null;
+
   // 1) Geometry
   for (const k of GEOMETRY_ATTRS) {
     if (!(k in node.attrs)) continue;
+    if (k === "d" && derivedD !== null) continue;
     const v = node.attrs[k];
     if (isDefault(k, v)) continue;
     emit(k, v);
   }
+  if (derivedD) emit("d", derivedD);
   // 2) Text attrs
   for (const k of TEXT_ATTRS) {
     if (!(k in node.attrs)) continue;

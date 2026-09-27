@@ -1,4 +1,4 @@
-// Tool state machine: select, rect, circle, ellipse, line, polyline.
+// Tool state machine: select, rect, circle, ellipse, line, polyline, pen.
 // All pointer/keyboard input on the canvas funnels through here.
 
 import {
@@ -6,10 +6,11 @@ import {
   mutate, newId, emptyTransform, findNode, findPath, topAncestor, walk,
 } from "./state.js";
 import * as history from "./history.js";
-import { toCanvasPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix, setHoverOutline, clearHoverOutline, resolveConnector, connectorMidpoint } from "./render.js";
+import { toCanvasPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix, setHoverOutline, clearHoverOutline, resolveConnector, connectorMidpoint, canvasPixelScale } from "./render.js";
 import * as guides from "./guides.js";
 import * as grid from "./grid.js";
 import { routeStraight } from "./connectors.js";
+import { anchorsToPath } from "./paths.js";
 
 const CANVAS_BBOX = { x: 0, y: 0, width: 1000, height: 700 };
 const SNAP_THRESHOLD = 6; // canvas units — feels right at default zoom
@@ -45,6 +46,7 @@ const CONNECTOR_STYLE = {
 let currentTool = "select";
 let canvasSvg;
 let polylineInProgress = null;  // { id, points, previewLineId } while drawing
+let penInProgress = null;       // { id, previewEl, dragging } while drawing a pen path
 
 // Gesture state
 let gesture = null;
@@ -64,6 +66,7 @@ export function mount(svg) {
 export function setTool(name) {
   if (currentTool === name) return;
   cancelPolyline();
+  cancelPen();
   currentTool = name;
   canvasSvg.classList.toggle("draw-mode", name !== "select");
   setHover(null); // hover highlight is a select-tool affordance
@@ -94,6 +97,7 @@ function onPointerDown(e) {
 
   // Draw tools
   if (currentTool === "polyline") return handlePolylineDown(e, p);
+  if (currentTool === "pen") return handlePenDown(e, p);
   if (currentTool === "text") return handleTextDown(e, p);
   if (currentTool === "connector") return startConnector(e, p, target);
   return startDraw(e, p);
@@ -104,6 +108,9 @@ function onPointerMove(e) {
 
   if (polylineInProgress) {
     updatePolylinePreview(p);
+  }
+  if (penInProgress && !gesture) {
+    updatePenPreview(p);
   }
 
   if (!gesture) {
@@ -140,6 +147,8 @@ function onPointerMove(e) {
     updateRotate(p, e);
   } else if (gesture.type === "waypoint") {
     updateWaypoint(p, e);
+  } else if (gesture.type === "pen") {
+    updatePenDrag(p, e);
   } else if (gesture.type === "marquee") {
     updateMarquee(p);
   } else if (gesture.type === "connector") {
@@ -197,6 +206,9 @@ function onPointerUp(e) {
     // crossed the threshold inserted nothing, so drop the transaction.
     if (g.moved) history.commit("waypoint");
     else history.abort();
+  } else if (g.type === "pen") {
+    finishPenAnchor(g, e);
+    return; // pen path stays in progress; don't clear its rubber-band preview
   }
 
   clearTransient();
@@ -216,6 +228,12 @@ function onContextMenu(e) {
 function onDoubleClick(e) {
   if (polylineInProgress) {
     commitPolyline();
+    return;
+  }
+  if (penInProgress) {
+    // The double-click's second press already appended a coincident anchor;
+    // commitPen drops that trailing duplicate before finalizing.
+    commitPen();
     return;
   }
   // Double-clicking a waypoint handle removes that waypoint. Checked before the
@@ -829,6 +847,149 @@ export function cancelPolyline() {
     });
     history.abort();
   }
+}
+
+// --- Pen / bézier path (click for corners, click-drag for smooth curves) ---
+//
+// Mirrors the polyline click-flow but builds the structured anchor model from
+// paths.js (node.anchors + node.closed) rather than a flat point list. Each
+// pointerdown adds an anchor; dragging before release pulls out a symmetric
+// bézier handle (a smooth point). Clicking the first anchor closes the path;
+// double-click / Enter / tool-switch finalizes; Escape also finalizes a valid
+// path (matching the polyline tool). The whole session is one history entry.
+const PEN_CLOSE_PX = 10; // screen px: click within this of the first anchor closes
+
+function handlePenDown(e, p) {
+  const snapped = (grid.isSnap() && !e.altKey) ? grid.snapPoint(p.x, p.y) : p;
+
+  if (!penInProgress) {
+    const id = newId("p");
+    history.beginTransaction();
+    const node = {
+      id, type: "path", transform: emptyTransform(),
+      anchors: [{ x: round2(snapped.x), y: round2(snapped.y) }],
+      closed: false,
+      attrs: { fill: "none", stroke: "#222222", "stroke-width": 2, opacity: 1 },
+    };
+    mutate((root) => { root.children.push(node); });
+    penInProgress = { id };
+    ensurePenPreview();
+    // Start a pen gesture so an immediate drag pulls a handle off this anchor.
+    gesture = { type: "pen", origin: p, last: p, moved: false, penId: id, index: 0 };
+    return;
+  }
+
+  // Click near the first anchor closes the path (needs at least a triangle).
+  const node = findNode(getDoc(), penInProgress.id);
+  if (node && Array.isArray(node.anchors) && node.anchors.length >= 2) {
+    const first = node.anchors[0];
+    if (Math.hypot(p.x - first.x, p.y - first.y) <= PEN_CLOSE_PX * canvasPixelScale()) {
+      mutate((root) => {
+        const n = findNode(root, penInProgress.id);
+        if (n) n.closed = true;
+      });
+      commitPen();
+      return;
+    }
+  }
+
+  // Otherwise append a new anchor and arm a gesture for a drag-to-curve.
+  let index = 0;
+  mutate((root) => {
+    const n = findNode(root, penInProgress.id);
+    if (!n) return;
+    if (!Array.isArray(n.anchors)) n.anchors = [];
+    n.anchors.push({ x: round2(snapped.x), y: round2(snapped.y) });
+    index = n.anchors.length - 1;
+  });
+  gesture = { type: "pen", origin: p, last: p, moved: false, penId: penInProgress.id, index };
+}
+
+// Drag after placing an anchor pulls a symmetric bézier handle (smooth point).
+// The general move-threshold gate in onPointerMove only calls this once the drag
+// clears DRAG_THRESHOLD, so a plain click stays a corner.
+function updatePenDrag(p, e) {
+  const { penId, index } = gesture;
+  mutate((root) => {
+    const n = findNode(root, penId);
+    if (!n || !Array.isArray(n.anchors) || !n.anchors[index]) return;
+    const a = n.anchors[index];
+    // Outgoing handle follows the pointer; incoming handle mirrors it.
+    a.cout = { x: round2(p.x), y: round2(p.y) };
+    a.cin = { x: round2(2 * a.x - p.x), y: round2(2 * a.y - p.y) };
+  });
+}
+
+// pointerup on a pen anchor: it's already in the in-progress path, so the session
+// simply continues. The rubber-band preview resumes on the next pointermove.
+function finishPenAnchor(g, e) { /* nothing to commit per-anchor */ }
+
+function ensurePenPreview() {
+  if (!penInProgress || penInProgress.previewEl) return;
+  const line = document.createElementNS(SVG_NS, "line");
+  line.setAttribute("class", "rubber");
+  penInProgress.previewEl = line;
+  getTransientLayer().appendChild(line);
+}
+
+function updatePenPreview(p) {
+  if (!penInProgress) return;
+  const node = findNode(getDoc(), penInProgress.id);
+  if (!node || !Array.isArray(node.anchors) || !node.anchors.length) return;
+  const last = node.anchors[node.anchors.length - 1];
+  const line = penInProgress.previewEl;
+  if (!line) return;
+  line.setAttribute("x1", last.x);
+  line.setAttribute("y1", last.y);
+  line.setAttribute("x2", p.x);
+  line.setAttribute("y2", p.y);
+}
+
+// Finalize the in-progress pen path: drop a trailing anchor coincident with its
+// predecessor (a double-click to finish lands two clicks on one point), then
+// commit as one history entry — or drop the node entirely if it has < 2 anchors.
+function commitPen() {
+  if (!penInProgress) return;
+  const id = penInProgress.id;
+  penInProgress = null;
+  gesture = null;
+  clearTransient();
+  mutate((root) => {
+    const n = findNode(root, id);
+    if (!n || !Array.isArray(n.anchors)) return;
+    const a = n.anchors;
+    while (a.length >= 2) {
+      const p1 = a[a.length - 1], p2 = a[a.length - 2];
+      if (!p1.cin && !p1.cout && Math.abs(p1.x - p2.x) < 0.5 && Math.abs(p1.y - p2.y) < 0.5) a.pop();
+      else break;
+    }
+  });
+  const node = findNode(getDoc(), id);
+  if (!node || !Array.isArray(node.anchors) || node.anchors.length < 2) {
+    mutate((root) => {
+      const idx = root.children.findIndex(c => c.id === id);
+      if (idx >= 0) root.children.splice(idx, 1);
+    });
+    history.abort();
+    return;
+  }
+  history.commit("draw path");
+  setSelection([id]);
+}
+
+// Enter finalizes an in-progress pen path (keeps it selected). Returns whether it
+// did anything, so the keyboard handler can swallow the key only when relevant.
+export function finishPen() {
+  if (!penInProgress) return false;
+  commitPen();
+  return true;
+}
+
+// Tool-switch / Escape finalizes any valid in-progress path (commitPen drops an
+// under-2-anchor stub), mirroring cancelPolyline.
+export function cancelPen() {
+  if (!penInProgress) return;
+  commitPen();
 }
 
 // --- Resize handle gesture ---

@@ -4,6 +4,7 @@
 
 import { getDoc, getSelection, findNode } from "./state.js";
 import { routeStraight, routeOrthogonal } from "./connectors.js";
+import { anchorsToPath, anchorsBBox } from "./paths.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const HANDLE_SIZE = 8;      // px in screen space (via non-scaling stroke + fixed size)
@@ -271,6 +272,9 @@ function localBBoxOfShapeNode(node) {
     }
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
   }
+  if (node.type === "path" && Array.isArray(node.anchors) && node.anchors.length) {
+    return anchorsBBox(node.anchors);
+  }
   return { x: 0, y: 0, width: 0, height: 0 };
 }
 
@@ -305,10 +309,17 @@ function bboxOfGroupChildren(group) {
 
 function applyCommon(el, node) {
   el.setAttribute("data-id", node.id);
+  // Pen-drawn paths derive their `d` from the structured anchor model; any stored
+  // attrs.d is stale, so skip it and emit the freshly computed geometry instead.
+  const derivedD = node.type === "path" && Array.isArray(node.anchors)
+    ? anchorsToPath(node.anchors, node.closed)
+    : null;
   for (const [k, v] of Object.entries(node.attrs)) {
     if (v === undefined || v === null || v === "") continue;
+    if (k === "d" && derivedD !== null) continue;
     el.setAttribute(k, formatAttr(k, v));
   }
+  if (derivedD !== null) el.setAttribute("d", derivedD);
   const t = transformToString(node.transform);
   if (t) el.setAttribute("transform", t);
 }
@@ -559,7 +570,7 @@ function drawMultiSelectionChrome(boxes) {
 
 // Canvas (viewBox) units per screen pixel at the root — for sizing chrome that
 // lives directly in canvas space (no element transform to mirror).
-function canvasPixelScale() {
+export function canvasPixelScale() {
   const ctm = canvasSvg.getScreenCTM();
   if (!ctm) return 1;
   const sx = Math.hypot(ctm.a, ctm.b);
