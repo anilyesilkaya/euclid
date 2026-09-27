@@ -5,15 +5,16 @@ import {
   mutate, newId, findNode, findParent, findPath, walk, removeByIds, emptyTransform,
 } from "./state.js";
 import * as history from "./history.js";
-import { setTool, getTool, cancelPolyline, isTextEditing, openLabelEditor } from "./tools.js";
+import { setTool, getTool, cancelPolyline, cancelPen, finishPen, isTextEditing, openLabelEditor } from "./tools.js";
 import { align } from "./align.js";
 import * as persist from "./persist.js";
 
-const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", t: "text", x: "connector" };
+const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", n: "pen", t: "text", x: "connector" };
 
 let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity, pOpacityNum;
 let pText, pFontSize, pFontFamily, pTextColor, pRotation;
 let pConnectorRoute, connectorDivider, connectorRouteRow;
+let pArrowStart, pArrowEnd, connectorArrowStartRow, connectorArrowEndRow;
 let clipboard = null;
 let gridApi = null;   // set by mountGrid; used by keyboard shortcuts
 
@@ -124,6 +125,10 @@ function wireProperties(root) {
   pConnectorRoute = root.querySelector("#p-connector-route");
   connectorDivider = root.querySelector("#connector-divider");
   connectorRouteRow = root.querySelector("#connector-route-row");
+  pArrowStart = root.querySelector("#p-arrow-start");
+  pArrowEnd = root.querySelector("#p-arrow-end");
+  connectorArrowStartRow = root.querySelector("#connector-arrow-start-row");
+  connectorArrowEndRow = root.querySelector("#connector-arrow-end-row");
 
   pFill.addEventListener("input", () => applyToSelection("fill", pFill.value));
   pFill.addEventListener("change", () => historyCommitAfter(() => applyToSelection("fill", pFill.value)));
@@ -171,6 +176,9 @@ function wireProperties(root) {
 
   // Connector routing style (Straight / Orthogonal). One history entry per change.
   pConnectorRoute.addEventListener("change", () => historyRecord(() => applyConnectorRoute(pConnectorRoute.value)));
+  // Connector arrowheads.
+  pArrowStart.addEventListener("change", () => historyRecord(() => applyConnectorArrow("arrowStart", pArrowStart.checked)));
+  pArrowEnd.addEventListener("change", () => historyRecord(() => applyConnectorArrow("arrowEnd", pArrowEnd.checked)));
 
   pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
   pTextColor.addEventListener("change", () => historyCommitAfter(() => applyTextColor(pTextColor.value)));
@@ -264,6 +272,21 @@ function applyConnectorRoute(value) {
       if (value === "orthogonal") n.route = "orthogonal";
       else delete n.route;
       delete n.waypoints;
+    }
+  });
+}
+
+// Toggle an arrowhead flag (arrowStart / arrowEnd) on every selected connector.
+// Stored only when true; absence = no arrowhead (keeps the model/export lean).
+function applyConnectorArrow(flag, on) {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  mutate((root) => {
+    for (const id of ids) {
+      const n = findNode(root, id);
+      if (!n || n.type !== "connector") continue;
+      if (on) n[flag] = true;
+      else delete n[flag];
     }
   });
 }
@@ -367,8 +390,12 @@ export function refreshPropertyPanel() {
   const showConnector = connectors.length > 0;
   if (connectorDivider) connectorDivider.hidden = !showConnector;
   if (connectorRouteRow) connectorRouteRow.hidden = !showConnector;
-  if (showConnector && pConnectorRoute) {
-    pConnectorRoute.value = connectors[0].route === "orthogonal" ? "orthogonal" : "straight";
+  if (connectorArrowStartRow) connectorArrowStartRow.hidden = !showConnector;
+  if (connectorArrowEndRow) connectorArrowEndRow.hidden = !showConnector;
+  if (showConnector) {
+    if (pConnectorRoute) pConnectorRoute.value = connectors[0].route === "orthogonal" ? "orthogonal" : "straight";
+    if (pArrowStart) pArrowStart.checked = !!connectors[0].arrowStart;
+    if (pArrowEnd) pArrowEnd.checked = !!connectors[0].arrowEnd;
   }
   let sample = null;
   for (const id of ids) {
@@ -473,8 +500,12 @@ function wireKeyboard() {
       if (TOOL_KEYS[k]) { setTool(TOOL_KEYS[k]); e.preventDefault(); return; }
     }
 
+    // Enter finalizes an in-progress pen path without leaving the tool.
+    if (e.key === "Enter" && finishPen()) { e.preventDefault(); return; }
+
     if (e.key === "Escape") {
       cancelPolyline();
+      cancelPen();
       setTool("select");
       clearSelection();
       e.preventDefault(); return;

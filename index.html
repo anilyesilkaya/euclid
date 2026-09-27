@@ -29,6 +29,9 @@
       <button class="tool" data-tool="polyline" title="Polyline (P)">
         <svg viewBox="0 0 24 24" width="20" height="20"><polyline points="4,18 9,8 14,14 20,4" fill="none" stroke="currentColor" stroke-width="2"/></svg>
       </button>
+      <button class="tool" data-tool="pen" title="Pen (N) — click for corners, drag for curves; Enter/dbl-click to finish, click first point to close">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 20c6-2 4-12 10-14" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 4l4 2-2 4-4-2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="4" cy="20" r="1.6" fill="currentColor"/></svg>
+      </button>
       <button class="tool" data-tool="text" title="Text (T)">
         <svg viewBox="0 0 24 24" width="20" height="20"><text x="12" y="17" text-anchor="middle" font-family="serif" font-size="18" font-weight="700" fill="currentColor">T</text></svg>
       </button>
@@ -113,6 +116,8 @@
             <option value="straight">Straight</option>
             <option value="orthogonal">Orthogonal</option>
           </select></label>
+          <label class="chk" id="connector-arrow-start-row" hidden><input type="checkbox" id="p-arrow-start"> Arrow at start</label>
+          <label class="chk" id="connector-arrow-end-row" hidden><input type="checkbox" id="p-arrow-end"> Arrow at end</label>
           <div class="props-divider">Align</div>
           <div id="align-grid" class="align-grid" role="group" aria-label="Align">
             <button class="align-btn" type="button" data-align="left" title="Align left edges">

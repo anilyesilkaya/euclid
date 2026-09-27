@@ -233,6 +233,52 @@
     return { points, segInsert, valid: true };
   }
 
+  // js/paths.js
+  function round(n) {
+    if (typeof n !== "number") return n;
+    return Math.abs(n) < 1e-9 ? 0 : Math.round(n * 1e3) / 1e3;
+  }
+  function anchorsToPath(anchors, closed) {
+    if (!Array.isArray(anchors) || anchors.length === 0) return "";
+    const p = (n) => round(n);
+    const out = [`M ${p(anchors[0].x)} ${p(anchors[0].y)}`];
+    const seg = (a, b) => {
+      const hasCurve = a.cout || b.cin;
+      if (!hasCurve) return `L ${p(b.x)} ${p(b.y)}`;
+      const c1 = a.cout || { x: a.x, y: a.y };
+      const c2 = b.cin || { x: b.x, y: b.y };
+      return `C ${p(c1.x)} ${p(c1.y)} ${p(c2.x)} ${p(c2.y)} ${p(b.x)} ${p(b.y)}`;
+    };
+    for (let i = 1; i < anchors.length; i++) {
+      out.push(seg(anchors[i - 1], anchors[i]));
+    }
+    if (closed && anchors.length > 1) {
+      out.push(seg(anchors[anchors.length - 1], anchors[0]));
+      out.push("Z");
+    }
+    return out.join(" ");
+  }
+  function anchorsBBox(anchors) {
+    if (!Array.isArray(anchors) || anchors.length === 0) {
+      return { x: 0, y: 0, width: 0, height: 0 };
+    }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const acc = (x, y) => {
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    };
+    for (const a of anchors) {
+      if (!a || !isFinite(a.x) || !isFinite(a.y)) continue;
+      acc(a.x, a.y);
+      if (a.cin && isFinite(a.cin.x) && isFinite(a.cin.y)) acc(a.cin.x, a.cin.y);
+      if (a.cout && isFinite(a.cout.x) && isFinite(a.cout.y)) acc(a.cout.x, a.cout.y);
+    }
+    if (!isFinite(minX)) return { x: 0, y: 0, width: 0, height: 0 };
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+  }
+
   // js/render.js
   var SVG_NS = "http://www.w3.org/2000/svg";
   var HANDLE_SIZE = 8;
@@ -301,13 +347,16 @@
       docLayer.appendChild(nodeToElement(child));
     }
     for (const node of connectorNodes) {
-      const el = connectorElement(node);
-      if (el) docLayer.appendChild(el);
+      const geom = resolveConnector(node);
+      if (!geom || !geom.valid) continue;
+      docLayer.appendChild(connectorElement(node, geom));
+      if (node.label) {
+        const mid = connectorMidpoint(geom);
+        if (mid) docLayer.appendChild(connectorLabelElement(node, mid));
+      }
     }
   }
-  function connectorElement(node) {
-    const geom = resolveConnector(node);
-    if (!geom || !geom.valid) return null;
+  function connectorElement(node, geom) {
     const el = geom.points ? polylineConnector(geom.points) : lineConnector(geom);
     el.setAttribute("data-id", node.id);
     el.setAttribute("data-connector", "1");
@@ -319,17 +368,64 @@
     if (node.arrowStart) el.setAttribute("marker-start", "url(#arrow-start)");
     return el;
   }
+  function connectorLabelElement(node, mid) {
+    const style = node.labelStyle || {};
+    const t = document.createElementNS(SVG_NS, "text");
+    t.setAttribute("data-id", node.id);
+    t.setAttribute("data-role", "label");
+    t.setAttribute("data-owner", node.id);
+    t.setAttribute("x", round2(mid.x));
+    t.setAttribute("y", round2(mid.y));
+    t.setAttribute("text-anchor", "middle");
+    t.setAttribute("dominant-baseline", "middle");
+    t.setAttribute("font-family", style["font-family"] || "sans-serif");
+    t.setAttribute("font-size", style["font-size"] || 16);
+    t.setAttribute("fill", style.fill || "#000000");
+    t.setAttribute("stroke", "#ffffff");
+    t.setAttribute("stroke-width", 3);
+    t.setAttribute("stroke-linejoin", "round");
+    t.setAttribute("paint-order", "stroke");
+    t.textContent = node.label;
+    return t;
+  }
+  function connectorMidpoint(geom) {
+    if (!geom) return null;
+    if (geom.points) {
+      const pts = geom.points;
+      if (pts.length < 2) return null;
+      let total = 0;
+      for (let i = 0; i < pts.length - 1; i++) {
+        total += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+      }
+      let half = total / 2;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const [x1, y1] = pts[i], [x2, y2] = pts[i + 1];
+        const segLen = Math.hypot(x2 - x1, y2 - y1);
+        if (segLen >= half) {
+          const f = segLen === 0 ? 0 : half / segLen;
+          return { x: x1 + (x2 - x1) * f, y: y1 + (y2 - y1) * f };
+        }
+        half -= segLen;
+      }
+      const last = pts[pts.length - 1];
+      return { x: last[0], y: last[1] };
+    }
+    if (typeof geom.x1 === "number") {
+      return { x: (geom.x1 + geom.x2) / 2, y: (geom.y1 + geom.y2) / 2 };
+    }
+    return null;
+  }
   function lineConnector(geom) {
     const line = document.createElementNS(SVG_NS, "line");
-    line.setAttribute("x1", round(geom.x1));
-    line.setAttribute("y1", round(geom.y1));
-    line.setAttribute("x2", round(geom.x2));
-    line.setAttribute("y2", round(geom.y2));
+    line.setAttribute("x1", round2(geom.x1));
+    line.setAttribute("y1", round2(geom.y1));
+    line.setAttribute("x2", round2(geom.x2));
+    line.setAttribute("y2", round2(geom.y2));
     return line;
   }
   function polylineConnector(points) {
     const pl = document.createElementNS(SVG_NS, "polyline");
-    pl.setAttribute("points", points.map(([x, y]) => `${round(x)},${round(y)}`).join(" "));
+    pl.setAttribute("points", points.map(([x, y]) => `${round2(x)},${round2(y)}`).join(" "));
     pl.setAttribute("fill", "none");
     return pl;
   }
@@ -388,8 +484,8 @@
     t.setAttribute("data-owner", ownerNode.id);
     const cx = bbox.x + bbox.width / 2;
     const cy = bbox.y + bbox.height / 2;
-    t.setAttribute("x", round(cx));
-    t.setAttribute("y", round(cy));
+    t.setAttribute("x", round2(cx));
+    t.setAttribute("y", round2(cy));
     t.setAttribute("text-anchor", "middle");
     t.setAttribute("dominant-baseline", "middle");
     t.setAttribute("font-family", ownerNode.labelStyle?.["font-family"] || "sans-serif");
@@ -417,6 +513,9 @@
         if (y > maxY) maxY = y;
       }
       return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+    }
+    if (node.type === "path" && Array.isArray(node.anchors) && node.anchors.length) {
+      return anchorsBBox(node.anchors);
     }
     return { x: 0, y: 0, width: 0, height: 0 };
   }
@@ -450,28 +549,31 @@
   }
   function applyCommon(el, node) {
     el.setAttribute("data-id", node.id);
+    const derivedD = node.type === "path" && Array.isArray(node.anchors) ? anchorsToPath(node.anchors, node.closed) : null;
     for (const [k, v] of Object.entries(node.attrs)) {
       if (v === void 0 || v === null || v === "") continue;
+      if (k === "d" && derivedD !== null) continue;
       el.setAttribute(k, formatAttr(k, v));
     }
+    if (derivedD !== null) el.setAttribute("d", derivedD);
     const t = transformToString(node.transform);
     if (t) el.setAttribute("transform", t);
   }
   function formatAttr(k, v) {
     if (k === "points" && Array.isArray(v)) {
-      return v.map((p) => `${round(p[0])},${round(p[1])}`).join(" ");
+      return v.map((p) => `${round2(p[0])},${round2(p[1])}`).join(" ");
     }
-    if (typeof v === "number") return round(v);
+    if (typeof v === "number") return round2(v);
     return String(v);
   }
   function transformToString(t) {
     if (!t) return "";
     const parts = [];
-    if (t.tx || t.ty) parts.push(`translate(${round(t.tx)},${round(t.ty)})`);
-    if (t.rot) parts.push(`rotate(${round(t.rot)},${round(t.cx)},${round(t.cy)})`);
+    if (t.tx || t.ty) parts.push(`translate(${round2(t.tx)},${round2(t.ty)})`);
+    if (t.rot) parts.push(`rotate(${round2(t.rot)},${round2(t.cx)},${round2(t.cy)})`);
     return parts.join(" ");
   }
-  function round(n) {
+  function round2(n) {
     if (typeof n !== "number") return n;
     return Math.abs(n) < 1e-9 ? 0 : Math.round(n * 1e3) / 1e3;
   }
@@ -1076,6 +1178,7 @@
   var currentTool = "select";
   var canvasSvg2;
   var polylineInProgress = null;
+  var penInProgress = null;
   var gesture = null;
   var downClient = null;
   function mount3(svg3) {
@@ -1092,6 +1195,7 @@
   function setTool(name) {
     if (currentTool === name) return;
     cancelPolyline();
+    cancelPen();
     currentTool = name;
     canvasSvg2.classList.toggle("draw-mode", name !== "select");
     setHover(null);
@@ -1113,6 +1217,7 @@
     if (role === "waypoint" || role === "waypoint-add") return startWaypointDrag(e, target, p);
     if (currentTool === "select") return handleSelectDown(e, p, target);
     if (currentTool === "polyline") return handlePolylineDown(e, p);
+    if (currentTool === "pen") return handlePenDown(e, p);
     if (currentTool === "text") return handleTextDown(e, p);
     if (currentTool === "connector") return startConnector(e, p, target);
     return startDraw(e, p);
@@ -1121,6 +1226,9 @@
     const p = toCanvasPoint(e);
     if (polylineInProgress) {
       updatePolylinePreview(p);
+    }
+    if (penInProgress && !gesture) {
+      updatePenPreview(p);
     }
     if (!gesture) {
       updateHover(e);
@@ -1150,6 +1258,8 @@
       updateRotate(p, e);
     } else if (gesture.type === "waypoint") {
       updateWaypoint(p, e);
+    } else if (gesture.type === "pen") {
+      updatePenDrag(p, e);
     } else if (gesture.type === "marquee") {
       updateMarquee(p);
     } else if (gesture.type === "connector") {
@@ -1202,6 +1312,9 @@
     } else if (g.type === "waypoint") {
       if (g.moved) commit("waypoint");
       else abort();
+    } else if (g.type === "pen") {
+      finishPenAnchor(g, e);
+      return;
     }
     clearTransient();
   }
@@ -1223,6 +1336,10 @@
   function onDoubleClick(e) {
     if (polylineInProgress) {
       commitPolyline();
+      return;
+    }
+    if (penInProgress) {
+      commitPen();
       return;
     }
     const role = e.target.getAttribute && e.target.getAttribute("data-role");
@@ -1602,8 +1719,8 @@
     const dist = Math.hypot(g.last.x - g.origin.x, g.last.y - g.origin.y);
     const hasAttachment = !!g.from.ref || !!toId;
     if (!hasAttachment || dist < 4 && !toId) return;
-    const to = toId ? { ref: toId } : { x: round2(g.last.x), y: round2(g.last.y) };
-    const from = g.from.ref ? { ref: g.from.ref } : { x: round2(g.from.x), y: round2(g.from.y) };
+    const to = toId ? { ref: toId } : { x: round22(g.last.x), y: round22(g.last.y) };
+    const from = g.from.ref ? { ref: g.from.ref } : { x: round22(g.from.x), y: round22(g.from.y) };
     const id = newId("c");
     const node = {
       id,
@@ -1663,12 +1780,12 @@
       if (!n) return;
       if (!Array.isArray(n.waypoints)) n.waypoints = [];
       if (gesture.pendingInsert) {
-        n.waypoints.splice(index, 0, { x: round2(pt.x), y: round2(pt.y) });
+        n.waypoints.splice(index, 0, { x: round22(pt.x), y: round22(pt.y) });
         gesture.pendingInsert = false;
       } else {
         if (!n.waypoints[index]) n.waypoints[index] = { x: 0, y: 0 };
-        n.waypoints[index].x = round2(pt.x);
-        n.waypoints[index].y = round2(pt.y);
+        n.waypoints[index].x = round22(pt.x);
+        n.waypoints[index].y = round22(pt.y);
       }
     });
   }
@@ -1760,6 +1877,118 @@
       });
       abort();
     }
+  }
+  var PEN_CLOSE_PX = 10;
+  function handlePenDown(e, p) {
+    const snapped = isSnap() && !e.altKey ? snapPoint(p.x, p.y) : p;
+    if (!penInProgress) {
+      const id = newId("p");
+      beginTransaction();
+      const node2 = {
+        id,
+        type: "path",
+        transform: emptyTransform(),
+        anchors: [{ x: round22(snapped.x), y: round22(snapped.y) }],
+        closed: false,
+        attrs: { fill: "none", stroke: "#222222", "stroke-width": 2, opacity: 1 }
+      };
+      mutate((root) => {
+        root.children.push(node2);
+      });
+      penInProgress = { id };
+      ensurePenPreview();
+      gesture = { type: "pen", origin: p, last: p, moved: false, penId: id, index: 0 };
+      return;
+    }
+    const node = findNode(getDoc(), penInProgress.id);
+    if (node && Array.isArray(node.anchors) && node.anchors.length >= 2) {
+      const first = node.anchors[0];
+      if (Math.hypot(p.x - first.x, p.y - first.y) <= PEN_CLOSE_PX * canvasPixelScale()) {
+        mutate((root) => {
+          const n = findNode(root, penInProgress.id);
+          if (n) n.closed = true;
+        });
+        commitPen();
+        return;
+      }
+    }
+    let index = 0;
+    mutate((root) => {
+      const n = findNode(root, penInProgress.id);
+      if (!n) return;
+      if (!Array.isArray(n.anchors)) n.anchors = [];
+      n.anchors.push({ x: round22(snapped.x), y: round22(snapped.y) });
+      index = n.anchors.length - 1;
+    });
+    gesture = { type: "pen", origin: p, last: p, moved: false, penId: penInProgress.id, index };
+  }
+  function updatePenDrag(p, e) {
+    const { penId, index } = gesture;
+    mutate((root) => {
+      const n = findNode(root, penId);
+      if (!n || !Array.isArray(n.anchors) || !n.anchors[index]) return;
+      const a = n.anchors[index];
+      a.cout = { x: round22(p.x), y: round22(p.y) };
+      a.cin = { x: round22(2 * a.x - p.x), y: round22(2 * a.y - p.y) };
+    });
+  }
+  function finishPenAnchor(g, e) {
+  }
+  function ensurePenPreview() {
+    if (!penInProgress || penInProgress.previewEl) return;
+    const line = document.createElementNS(SVG_NS3, "line");
+    line.setAttribute("class", "rubber");
+    penInProgress.previewEl = line;
+    getTransientLayer().appendChild(line);
+  }
+  function updatePenPreview(p) {
+    if (!penInProgress) return;
+    const node = findNode(getDoc(), penInProgress.id);
+    if (!node || !Array.isArray(node.anchors) || !node.anchors.length) return;
+    const last = node.anchors[node.anchors.length - 1];
+    const line = penInProgress.previewEl;
+    if (!line) return;
+    line.setAttribute("x1", last.x);
+    line.setAttribute("y1", last.y);
+    line.setAttribute("x2", p.x);
+    line.setAttribute("y2", p.y);
+  }
+  function commitPen() {
+    if (!penInProgress) return;
+    const id = penInProgress.id;
+    penInProgress = null;
+    gesture = null;
+    clearTransient();
+    mutate((root) => {
+      const n = findNode(root, id);
+      if (!n || !Array.isArray(n.anchors)) return;
+      const a = n.anchors;
+      while (a.length >= 2) {
+        const p1 = a[a.length - 1], p2 = a[a.length - 2];
+        if (!p1.cin && !p1.cout && Math.abs(p1.x - p2.x) < 0.5 && Math.abs(p1.y - p2.y) < 0.5) a.pop();
+        else break;
+      }
+    });
+    const node = findNode(getDoc(), id);
+    if (!node || !Array.isArray(node.anchors) || node.anchors.length < 2) {
+      mutate((root) => {
+        const idx = root.children.findIndex((c) => c.id === id);
+        if (idx >= 0) root.children.splice(idx, 1);
+      });
+      abort();
+      return;
+    }
+    commit("draw path");
+    setSelection([id]);
+  }
+  function finishPen() {
+    if (!penInProgress) return false;
+    commitPen();
+    return true;
+  }
+  function cancelPen() {
+    if (!penInProgress) return;
+    commitPen();
   }
   function startResize(e, handleEl, p) {
     const dir = handleEl.getAttribute("data-handle");
@@ -2122,7 +2351,7 @@
   function cssEscape2(s) {
     return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
   }
-  function round2(n) {
+  function round22(n) {
     return Math.round(n * 100) / 100;
   }
   function handleTextDown(e, p) {
@@ -2230,6 +2459,18 @@
     if (labelDom) {
       const r3 = labelDom.getBoundingClientRect();
       return { ...base, left: `${r3.left + r3.width / 2}px`, top: `${r3.top + r3.height / 2}px` };
+    }
+    if (node.type === "connector") {
+      const geom = resolveConnector(node);
+      const mid = connectorMidpoint(geom);
+      const ctmS = svg3.getScreenCTM();
+      if (mid && ctmS) {
+        const pt = svg3.createSVGPoint();
+        pt.x = mid.x;
+        pt.y = mid.y;
+        const s = pt.matrixTransform(ctmS);
+        return { ...base, left: `${s.x}px`, top: `${s.y}px` };
+      }
     }
     const shapeDom = getDocLayer().querySelector(`[data-id="${cssEscape2(node.id)}"]`);
     if (shapeDom) {
@@ -2631,7 +2872,7 @@
   }
 
   // js/ui.js
-  var TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", t: "text", x: "connector" };
+  var TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", n: "pen", t: "text", x: "connector" };
   var propsEmpty;
   var propsForm;
   var pFill;
@@ -2649,6 +2890,10 @@
   var pConnectorRoute;
   var connectorDivider;
   var connectorRouteRow;
+  var pArrowStart;
+  var pArrowEnd;
+  var connectorArrowStartRow;
+  var connectorArrowEndRow;
   var clipboard = null;
   var gridApi = null;
   function mount5(root) {
@@ -2736,6 +2981,10 @@
     pConnectorRoute = root.querySelector("#p-connector-route");
     connectorDivider = root.querySelector("#connector-divider");
     connectorRouteRow = root.querySelector("#connector-route-row");
+    pArrowStart = root.querySelector("#p-arrow-start");
+    pArrowEnd = root.querySelector("#p-arrow-end");
+    connectorArrowStartRow = root.querySelector("#connector-arrow-start-row");
+    connectorArrowEndRow = root.querySelector("#connector-arrow-end-row");
     pFill.addEventListener("input", () => applyToSelection("fill", pFill.value));
     pFill.addEventListener("change", () => historyCommitAfter(() => applyToSelection("fill", pFill.value)));
     pFillNone.addEventListener("change", () => historyRecord(() => applyToSelection("fill", pFillNone.checked ? "none" : pFill.value)));
@@ -2777,6 +3026,8 @@
     pFontSize.addEventListener("pointerdown", () => beginTransaction());
     pFontFamily.addEventListener("change", () => historyRecord(() => applyFontFamily(pFontFamily.value)));
     pConnectorRoute.addEventListener("change", () => historyRecord(() => applyConnectorRoute(pConnectorRoute.value)));
+    pArrowStart.addEventListener("change", () => historyRecord(() => applyConnectorArrow("arrowStart", pArrowStart.checked)));
+    pArrowEnd.addEventListener("change", () => historyRecord(() => applyConnectorArrow("arrowEnd", pArrowEnd.checked)));
     pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
     pTextColor.addEventListener("change", () => historyCommitAfter(() => applyTextColor(pTextColor.value)));
     pRotation.addEventListener("input", () => {
@@ -2860,6 +3111,18 @@
         if (value === "orthogonal") n.route = "orthogonal";
         else delete n.route;
         delete n.waypoints;
+      }
+    });
+  }
+  function applyConnectorArrow(flag, on) {
+    const ids = [...getSelection()];
+    if (ids.length === 0) return;
+    mutate((root) => {
+      for (const id of ids) {
+        const n = findNode(root, id);
+        if (!n || n.type !== "connector") continue;
+        if (on) n[flag] = true;
+        else delete n[flag];
       }
     });
   }
@@ -2947,8 +3210,12 @@
     const showConnector = connectors.length > 0;
     if (connectorDivider) connectorDivider.hidden = !showConnector;
     if (connectorRouteRow) connectorRouteRow.hidden = !showConnector;
-    if (showConnector && pConnectorRoute) {
-      pConnectorRoute.value = connectors[0].route === "orthogonal" ? "orthogonal" : "straight";
+    if (connectorArrowStartRow) connectorArrowStartRow.hidden = !showConnector;
+    if (connectorArrowEndRow) connectorArrowEndRow.hidden = !showConnector;
+    if (showConnector) {
+      if (pConnectorRoute) pConnectorRoute.value = connectors[0].route === "orthogonal" ? "orthogonal" : "straight";
+      if (pArrowStart) pArrowStart.checked = !!connectors[0].arrowStart;
+      if (pArrowEnd) pArrowEnd.checked = !!connectors[0].arrowEnd;
     }
     let sample = null;
     for (const id of ids) {
@@ -2968,7 +3235,7 @@
     pStroke.value = normalizeColor(stroke, "#222222");
     pStrokeWidth.value = sw;
     pOpacity.value = op;
-    pOpacityNum.value = round22(op);
+    pOpacityNum.value = round23(op);
     const firstSel = findNode(doc2, ids[0]);
     const rot = firstSel?.transform?.rot || 0;
     if (document.activeElement !== pRotation) pRotation.value = normalizeAngle(rot) ?? 0;
@@ -2997,7 +3264,7 @@
     }
     return null;
   }
-  function round22(n) {
+  function round23(n) {
     return Math.round(Number(n) * 100) / 100;
   }
   function normalizeAngle(raw) {
@@ -3036,8 +3303,13 @@
           return;
         }
       }
+      if (e.key === "Enter" && finishPen()) {
+        e.preventDefault();
+        return;
+      }
       if (e.key === "Escape") {
         cancelPolyline();
+        cancelPen();
         setTool("select");
         clearSelection();
         e.preventDefault();
@@ -3421,7 +3693,28 @@
       }
       if (node.arrowEnd) parts.push(`marker-end="url(#arrow-end)"`);
       if (node.arrowStart) parts.push(`marker-start="url(#arrow-start)"`);
-      return [`${pad}<${tag} ${parts.join(" ")}/>`];
+      const out = [`${pad}<${tag} ${parts.join(" ")}/>`];
+      if (node.label) {
+        const mid = connectorMidpoint(g);
+        if (mid) {
+          const style = node.labelStyle || {};
+          const lp = [
+            `x="${round3(mid.x)}"`,
+            `y="${round3(mid.y)}"`,
+            `text-anchor="middle"`,
+            `dominant-baseline="middle"`,
+            `font-family="${escapeXml(String(style["font-family"] || "sans-serif"))}"`,
+            `font-size="${round3(style["font-size"] || 16)}"`,
+            `fill="${escapeXml(String(style.fill || "#000000"))}"`,
+            `stroke="#ffffff"`,
+            `stroke-width="3"`,
+            `stroke-linejoin="round"`,
+            `paint-order="stroke"`
+          ];
+          out.push(`${pad}<text ${lp.join(" ")}>${escapeXmlText(String(node.label))}</text>`);
+        }
+      }
+      return out;
     }
     const attrs = buildAttrs(node);
     const attrStr = attrs.length ? " " + attrs.join(" ") : "";
@@ -3517,6 +3810,9 @@
       }
       return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
     }
+    if (node.type === "path" && Array.isArray(node.anchors) && node.anchors.length) {
+      return anchorsBBox(node.anchors);
+    }
     if (node.type === "text") {
       const size = a["font-size"] || 16;
       const w = String(node.text || "").length * size * 0.6;
@@ -3530,12 +3826,15 @@
   function buildAttrs(node) {
     const attrs = [];
     const emit2 = (k, v) => attrs.push(`${k}="${formatValue(k, v)}"`);
+    const derivedD = node.type === "path" && Array.isArray(node.anchors) ? anchorsToPath(node.anchors, node.closed) : null;
     for (const k of GEOMETRY_ATTRS) {
       if (!(k in node.attrs)) continue;
+      if (k === "d" && derivedD !== null) continue;
       const v = node.attrs[k];
       if (isDefault(k, v)) continue;
       emit2(k, v);
     }
+    if (derivedD) emit2("d", derivedD);
     for (const k of TEXT_ATTRS) {
       if (!(k in node.attrs)) continue;
       const v = node.attrs[k];

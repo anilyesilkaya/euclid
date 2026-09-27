@@ -4,6 +4,7 @@
 
 import { getDoc, getSelection, findNode } from "./state.js";
 import { routeStraight, routeOrthogonal } from "./connectors.js";
+import { anchorsToPath, anchorsBBox } from "./paths.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const HANDLE_SIZE = 8;      // px in screen space (via non-scaling stroke + fixed size)
@@ -73,19 +74,23 @@ function renderDoc() {
     if (child.type === "connector") { connectorNodes.push(child); continue; }
     docLayer.appendChild(nodeToElement(child));
   }
-  // Pass 2: connectors, now that every shape has a measurable box.
+  // Pass 2: connectors, now that every shape has a measurable box. A connector
+  // with a label draws the edge plus a mid-edge <text> (a sibling, so it isn't
+  // clipped by the thin line and stays hit-testable to the connector's id).
   for (const node of connectorNodes) {
-    const el = connectorElement(node);
-    if (el) docLayer.appendChild(el);
+    const geom = resolveConnector(node);
+    if (!geom || !geom.valid) continue;
+    docLayer.appendChild(connectorElement(node, geom));
+    if (node.label) {
+      const mid = connectorMidpoint(geom);
+      if (mid) docLayer.appendChild(connectorLabelElement(node, mid));
+    }
   }
 }
 
-// Resolve + build a connector element. Orthogonal routes render as a <polyline>
-// (multi-segment); straight routes as a <line>. Returns null if it can't be
-// routed (e.g. an attached shape was deleted) so a broken edge simply doesn't draw.
-function connectorElement(node) {
-  const geom = resolveConnector(node);
-  if (!geom || !geom.valid) return null;
+// Build a connector element from already-resolved geometry. Orthogonal routes
+// render as a <polyline> (multi-segment); straight routes as a <line>.
+function connectorElement(node, geom) {
   const el = geom.points
     ? polylineConnector(geom.points)
     : lineConnector(geom);
@@ -98,6 +103,61 @@ function connectorElement(node) {
   if (node.arrowEnd) el.setAttribute("marker-end", "url(#arrow-end)");
   if (node.arrowStart) el.setAttribute("marker-start", "url(#arrow-start)");
   return el;
+}
+
+// Mid-edge label for a connector: a <text> centered on the path midpoint with a
+// white halo (paint-order stroke) so it stays readable where it crosses the line.
+// Carries the connector's id so clicking the label selects the connector.
+function connectorLabelElement(node, mid) {
+  const style = node.labelStyle || {};
+  const t = document.createElementNS(SVG_NS, "text");
+  t.setAttribute("data-id", node.id);
+  t.setAttribute("data-role", "label");
+  t.setAttribute("data-owner", node.id);
+  t.setAttribute("x", round(mid.x));
+  t.setAttribute("y", round(mid.y));
+  t.setAttribute("text-anchor", "middle");
+  t.setAttribute("dominant-baseline", "middle");
+  t.setAttribute("font-family", style["font-family"] || "sans-serif");
+  t.setAttribute("font-size", style["font-size"] || 16);
+  t.setAttribute("fill", style.fill || "#000000");
+  t.setAttribute("stroke", "#ffffff");
+  t.setAttribute("stroke-width", 3);
+  t.setAttribute("stroke-linejoin", "round");
+  t.setAttribute("paint-order", "stroke");
+  t.textContent = node.label;
+  return t;
+}
+
+// Point at half the path length of a resolved connector geometry — where the
+// mid-edge label sits. Handles both straight ({x1,y1,x2,y2}) and orthogonal
+// ({points}) routes. Exported so export.js positions labels identically.
+export function connectorMidpoint(geom) {
+  if (!geom) return null;
+  if (geom.points) {
+    const pts = geom.points;
+    if (pts.length < 2) return null;
+    let total = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+      total += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+    }
+    let half = total / 2;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x1, y1] = pts[i], [x2, y2] = pts[i + 1];
+      const segLen = Math.hypot(x2 - x1, y2 - y1);
+      if (segLen >= half) {
+        const f = segLen === 0 ? 0 : half / segLen;
+        return { x: x1 + (x2 - x1) * f, y: y1 + (y2 - y1) * f };
+      }
+      half -= segLen;
+    }
+    const last = pts[pts.length - 1];
+    return { x: last[0], y: last[1] };
+  }
+  if (typeof geom.x1 === "number") {
+    return { x: (geom.x1 + geom.x2) / 2, y: (geom.y1 + geom.y2) / 2 };
+  }
+  return null;
 }
 
 function lineConnector(geom) {
@@ -212,6 +272,9 @@ function localBBoxOfShapeNode(node) {
     }
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
   }
+  if (node.type === "path" && Array.isArray(node.anchors) && node.anchors.length) {
+    return anchorsBBox(node.anchors);
+  }
   return { x: 0, y: 0, width: 0, height: 0 };
 }
 
@@ -246,10 +309,17 @@ function bboxOfGroupChildren(group) {
 
 function applyCommon(el, node) {
   el.setAttribute("data-id", node.id);
+  // Pen-drawn paths derive their `d` from the structured anchor model; any stored
+  // attrs.d is stale, so skip it and emit the freshly computed geometry instead.
+  const derivedD = node.type === "path" && Array.isArray(node.anchors)
+    ? anchorsToPath(node.anchors, node.closed)
+    : null;
   for (const [k, v] of Object.entries(node.attrs)) {
     if (v === undefined || v === null || v === "") continue;
+    if (k === "d" && derivedD !== null) continue;
     el.setAttribute(k, formatAttr(k, v));
   }
+  if (derivedD !== null) el.setAttribute("d", derivedD);
   const t = transformToString(node.transform);
   if (t) el.setAttribute("transform", t);
 }
@@ -500,7 +570,7 @@ function drawMultiSelectionChrome(boxes) {
 
 // Canvas (viewBox) units per screen pixel at the root — for sizing chrome that
 // lives directly in canvas space (no element transform to mirror).
-function canvasPixelScale() {
+export function canvasPixelScale() {
   const ctm = canvasSvg.getScreenCTM();
   if (!ctm) return 1;
   const sx = Math.hypot(ctm.a, ctm.b);
