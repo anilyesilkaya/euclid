@@ -70,7 +70,7 @@ save/open format with debounced autosave.
 
 ## Phase 3 — Illustrator vector editing
 
-- **M6 — Pen / bézier path tool + path-point editing.** 🚧 **In progress.**
+- **M6 — Pen / bézier path tool + path-point editing.** ✅ **Done.**
   - **Part 1 — Pen tool + structured path model.** ✅ **Done.** A **Pen (N)**
     tool builds a real `path` from a structured anchor model
     (`node.anchors: [{x, y, cin?, cout?}]` + `node.closed`, in `js/paths.js`);
@@ -83,8 +83,17 @@ save/open format with debounced autosave.
     history entry. (Also fixed a latent CSS bug where `#props-form label`'s
     `display:grid` out-specified `[hidden]`, leaking the connector-only rows into
     every selection's property panel.)
-  - **Part 2 — Node / anchor / handle editing.** ⏳ Direct manipulation of an
-    existing path's anchors and bézier handles in the selection chrome.
+  - **Part 2 — Node / anchor / handle editing.** ✅ **Done.** A lone selected pen
+    path gets direct node-editing chrome instead of a bbox: a square handle at
+    each anchor and, for smooth anchors, a tethered round handle at each bézier
+    control point (`drawPathSelection` in `render.js`, drawn in the path's local
+    space so the chrome mirrors its transform). Drag an anchor to move it (its
+    handles ride along); drag a control point to reshape, with the opposite handle
+    mirroring for smoothness unless **Alt** breaks the pair (Illustrator-style);
+    double-click an anchor to delete it (dropping below 2 removes the path, below 3
+    reopens a closed path) or a control point to retract it (smooth → corner).
+    Pointer positions convert via the element matrix (`toLocalPoint`), so editing
+    works on rotated paths; every edit commits one history entry.
 - **M7 — Gradients.** A paint-server model (currently rejected on import by
   design in `import.js`), fill / stroke gradient UI, and export / import support.
 - **M10 — Illustrator-style rotate + copy and "Transform Again."** Make the

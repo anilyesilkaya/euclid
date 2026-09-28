@@ -368,6 +368,16 @@ function renderSelection() {
     return;
   }
 
+  // A lone selected pen path (structured anchors) gets direct node-editing chrome
+  // — anchor + bézier-handle points — instead of a bbox with resize/rotate handles.
+  if (boxes.length === 1) {
+    const node = findNode(getDoc(), boxes[0].id);
+    if (node && node.type === "path" && Array.isArray(node.anchors) && node.anchors.length) {
+      drawPathSelection(boxes[0], node);
+      return;
+    }
+  }
+
   // For a single selection: render tight rotated outline + 8 resize handles + rotate handle.
   // For multi-selection: render union AABB (in canvas space) + 8 resize handles, no rotate.
   if (boxes.length === 1) {
@@ -441,6 +451,69 @@ function drawConnectorSelection(id, el) {
     c.setAttribute("r", hs / 2);
     chromeSelection.appendChild(c);
   }
+}
+
+// Direct node-editing chrome for a pen path: control lines + round bézier-handle
+// points for smooth anchors, and a square handle at every anchor. All live in the
+// node's LOCAL space (same space as node.anchors), so the chrome group mirrors the
+// path element's transform — dragging then converts pointer→local via that matrix.
+function drawPathSelection({ id, el }, node) {
+  const wrap = document.createElementNS(SVG_NS, "g");
+  wrap.setAttribute("data-role", "path-edit");
+  wrap.setAttribute("data-id", id);
+  const t = el.getAttribute("transform");
+  if (t) wrap.setAttribute("transform", t);
+  chromeSelection.appendChild(wrap);
+
+  // Trace the path itself as a highlight (its own derived `d`, drawn in local space).
+  const outline = document.createElementNS(SVG_NS, "path");
+  outline.setAttribute("class", "connector-selected");
+  outline.setAttribute("d", el.getAttribute("d") || "");
+  outline.setAttribute("fill", "none");
+  wrap.appendChild(outline);
+
+  const scale = pixelScaleOf(el);
+  const hs = HANDLE_SIZE * scale;
+  const anchors = node.anchors;
+
+  // Bézier control handles first (so anchor squares paint on top).
+  anchors.forEach((a, i) => {
+    if (!a) return;
+    for (const which of ["cin", "cout"]) {
+      const c = a[which];
+      if (!c || !isFinite(c.x) || !isFinite(c.y)) continue;
+      const line = document.createElementNS(SVG_NS, "line");
+      line.setAttribute("class", "path-ctrl-line");
+      line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+      line.setAttribute("x2", c.x); line.setAttribute("y2", c.y);
+      wrap.appendChild(line);
+      const dot = document.createElementNS(SVG_NS, "circle");
+      dot.setAttribute("class", "path-ctrl-handle");
+      dot.setAttribute("data-role", "path-handle");
+      dot.setAttribute("data-id", id);
+      dot.setAttribute("data-index", i);
+      dot.setAttribute("data-which", which === "cin" ? "in" : "out");
+      dot.setAttribute("cx", c.x);
+      dot.setAttribute("cy", c.y);
+      dot.setAttribute("r", hs / 2);
+      wrap.appendChild(dot);
+    }
+  });
+
+  // Anchor squares.
+  anchors.forEach((a, i) => {
+    if (!a || !isFinite(a.x) || !isFinite(a.y)) return;
+    const h = document.createElementNS(SVG_NS, "rect");
+    h.setAttribute("class", "path-anchor-handle");
+    h.setAttribute("data-role", "path-anchor");
+    h.setAttribute("data-id", id);
+    h.setAttribute("data-index", i);
+    h.setAttribute("x", a.x - hs / 2);
+    h.setAttribute("y", a.y - hs / 2);
+    h.setAttribute("width", hs);
+    h.setAttribute("height", hs);
+    wrap.appendChild(h);
+  });
 }
 
 function drawSingleSelectionChrome({ id, el, box }) {
