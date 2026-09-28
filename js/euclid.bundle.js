@@ -593,6 +593,13 @@
       return;
     }
     if (boxes.length === 1) {
+      const node = findNode(getDoc(), boxes[0].id);
+      if (node && node.type === "path" && Array.isArray(node.anchors) && node.anchors.length) {
+        drawPathSelection(boxes[0], node);
+        return;
+      }
+    }
+    if (boxes.length === 1) {
       drawSingleSelectionChrome(boxes[0]);
     } else {
       drawMultiSelectionChrome(boxes);
@@ -651,6 +658,59 @@
       c.setAttribute("r", hs / 2);
       chromeSelection.appendChild(c);
     }
+  }
+  function drawPathSelection({ id, el }, node) {
+    const wrap = document.createElementNS(SVG_NS, "g");
+    wrap.setAttribute("data-role", "path-edit");
+    wrap.setAttribute("data-id", id);
+    const t = el.getAttribute("transform");
+    if (t) wrap.setAttribute("transform", t);
+    chromeSelection.appendChild(wrap);
+    const outline = document.createElementNS(SVG_NS, "path");
+    outline.setAttribute("class", "connector-selected");
+    outline.setAttribute("d", el.getAttribute("d") || "");
+    outline.setAttribute("fill", "none");
+    wrap.appendChild(outline);
+    const scale = pixelScaleOf(el);
+    const hs = HANDLE_SIZE * scale;
+    const anchors = node.anchors;
+    anchors.forEach((a, i) => {
+      if (!a) return;
+      for (const which of ["cin", "cout"]) {
+        const c = a[which];
+        if (!c || !isFinite(c.x) || !isFinite(c.y)) continue;
+        const line = document.createElementNS(SVG_NS, "line");
+        line.setAttribute("class", "path-ctrl-line");
+        line.setAttribute("x1", a.x);
+        line.setAttribute("y1", a.y);
+        line.setAttribute("x2", c.x);
+        line.setAttribute("y2", c.y);
+        wrap.appendChild(line);
+        const dot = document.createElementNS(SVG_NS, "circle");
+        dot.setAttribute("class", "path-ctrl-handle");
+        dot.setAttribute("data-role", "path-handle");
+        dot.setAttribute("data-id", id);
+        dot.setAttribute("data-index", i);
+        dot.setAttribute("data-which", which === "cin" ? "in" : "out");
+        dot.setAttribute("cx", c.x);
+        dot.setAttribute("cy", c.y);
+        dot.setAttribute("r", hs / 2);
+        wrap.appendChild(dot);
+      }
+    });
+    anchors.forEach((a, i) => {
+      if (!a || !isFinite(a.x) || !isFinite(a.y)) return;
+      const h = document.createElementNS(SVG_NS, "rect");
+      h.setAttribute("class", "path-anchor-handle");
+      h.setAttribute("data-role", "path-anchor");
+      h.setAttribute("data-id", id);
+      h.setAttribute("data-index", i);
+      h.setAttribute("x", a.x - hs / 2);
+      h.setAttribute("y", a.y - hs / 2);
+      h.setAttribute("width", hs);
+      h.setAttribute("height", hs);
+      wrap.appendChild(h);
+    });
   }
   function drawSingleSelectionChrome({ id, el, box }) {
     const wrap = document.createElementNS(SVG_NS, "g");
@@ -835,6 +895,15 @@
     pt.y = evt.clientY;
     const ctm = canvasSvg.getScreenCTM();
     if (!ctm) return { x: 0, y: 0 };
+    const p = pt.matrixTransform(ctm.inverse());
+    return { x: p.x, y: p.y };
+  }
+  function toLocalPoint(evt, el) {
+    const pt = canvasSvg.createSVGPoint();
+    pt.x = evt.clientX;
+    pt.y = evt.clientY;
+    const ctm = el.getScreenCTM();
+    if (!ctm) return toCanvasPoint(evt);
     const p = pt.matrixTransform(ctm.inverse());
     return { x: p.x, y: p.y };
   }
@@ -1215,6 +1284,7 @@
     if (role === "resize-multi") return startResizeMulti(e, target, p);
     if (role === "rotate") return startRotate(e, target, p);
     if (role === "waypoint" || role === "waypoint-add") return startWaypointDrag(e, target, p);
+    if (role === "path-anchor" || role === "path-handle") return startPathPointDrag(e, target, p);
     if (currentTool === "select") return handleSelectDown(e, p, target);
     if (currentTool === "polyline") return handlePolylineDown(e, p);
     if (currentTool === "pen") return handlePenDown(e, p);
@@ -1260,6 +1330,8 @@
       updateWaypoint(p, e);
     } else if (gesture.type === "pen") {
       updatePenDrag(p, e);
+    } else if (gesture.type === "path-point") {
+      updatePathPoint(e);
     } else if (gesture.type === "marquee") {
       updateMarquee(p);
     } else if (gesture.type === "connector") {
@@ -1272,7 +1344,7 @@
       return;
     }
     const role = e.target.getAttribute && e.target.getAttribute("data-role");
-    if (role === "resize" || role === "resize-multi" || role === "rotate" || role === "waypoint" || role === "waypoint-add") {
+    if (role === "resize" || role === "resize-multi" || role === "rotate" || role === "waypoint" || role === "waypoint-add" || role === "path-anchor" || role === "path-handle") {
       setHover(null);
       return;
     }
@@ -1315,6 +1387,9 @@
     } else if (g.type === "pen") {
       finishPenAnchor(g, e);
       return;
+    } else if (g.type === "path-point") {
+      if (g.moved) commit("edit path");
+      else abort();
     }
     clearTransient();
   }
@@ -1345,6 +1420,14 @@
     const role = e.target.getAttribute && e.target.getAttribute("data-role");
     if (role === "waypoint") {
       deleteWaypoint(e.target.getAttribute("data-id"), Number(e.target.getAttribute("data-index")));
+      return;
+    }
+    if (role === "path-anchor") {
+      deletePathAnchor(e.target.getAttribute("data-id"), Number(e.target.getAttribute("data-index")));
+      return;
+    }
+    if (role === "path-handle") {
+      retractPathHandle(e.target.getAttribute("data-id"), Number(e.target.getAttribute("data-index")), e.target.getAttribute("data-which"));
       return;
     }
     if (currentTool !== "select") return;
@@ -1989,6 +2072,95 @@
   function cancelPen() {
     if (!penInProgress) return;
     commitPen();
+  }
+  function startPathPointDrag(e, handleEl, p) {
+    const id = handleEl.getAttribute("data-id");
+    const node = findNode(getDoc(), id);
+    if (!node || node.type !== "path" || !Array.isArray(node.anchors)) return;
+    const index = Number(handleEl.getAttribute("data-index"));
+    const kind = handleEl.getAttribute("data-role");
+    const which = handleEl.getAttribute("data-which");
+    const el = getDocLayer().querySelector(`[data-id="${cssEscape2(id)}"]`);
+    beginTransaction();
+    gesture = {
+      type: "path-point",
+      origin: p,
+      last: p,
+      moved: false,
+      pathId: id,
+      index,
+      kind,
+      which,
+      el
+      // path element — supplies the local matrix each frame
+    };
+  }
+  function updatePathPoint(e) {
+    const { pathId, index, kind, which, el } = gesture;
+    let loc = el ? toLocalPoint(e, el) : toCanvasPoint(e);
+    if (kind === "path-anchor" && isSnap() && !e.altKey) {
+      const s = snapPoint(loc.x, loc.y);
+      loc = s;
+    }
+    const lx = round22(loc.x), ly = round22(loc.y);
+    mutate((root) => {
+      const n = findNode(root, pathId);
+      if (!n || !Array.isArray(n.anchors) || !n.anchors[index]) return;
+      const a = n.anchors[index];
+      if (kind === "path-anchor") {
+        const dx = lx - a.x, dy = ly - a.y;
+        a.x = lx;
+        a.y = ly;
+        if (a.cin) {
+          a.cin.x = round22(a.cin.x + dx);
+          a.cin.y = round22(a.cin.y + dy);
+        }
+        if (a.cout) {
+          a.cout.x = round22(a.cout.x + dx);
+          a.cout.y = round22(a.cout.y + dy);
+        }
+      } else {
+        const near = which === "in" ? "cin" : "cout";
+        const far = which === "in" ? "cout" : "cin";
+        a[near] = { x: lx, y: ly };
+        if (!e.altKey && a[far]) {
+          a[far] = { x: round22(2 * a.x - lx), y: round22(2 * a.y - ly) };
+        }
+      }
+    });
+  }
+  function deletePathAnchor(id, index) {
+    const node = findNode(getDoc(), id);
+    if (!node || node.type !== "path" || !Array.isArray(node.anchors)) return;
+    if (index < 0 || index >= node.anchors.length) return;
+    record(() => {
+      if (node.anchors.length <= 2) {
+        mutate((root) => {
+          const idx = root.children.findIndex((c) => c.id === id);
+          if (idx >= 0) root.children.splice(idx, 1);
+        });
+        clearSelection();
+        return;
+      }
+      mutate((root) => {
+        const n = findNode(root, id);
+        if (!n || !Array.isArray(n.anchors)) return;
+        n.anchors.splice(index, 1);
+        if (n.closed && n.anchors.length < 3) n.closed = false;
+      });
+    });
+  }
+  function retractPathHandle(id, index, which) {
+    const node = findNode(getDoc(), id);
+    if (!node || node.type !== "path" || !Array.isArray(node.anchors)) return;
+    const key = which === "in" ? "cin" : "cout";
+    if (!node.anchors[index] || !node.anchors[index][key]) return;
+    record(() => {
+      mutate((root) => {
+        const n = findNode(root, id);
+        if (n && n.anchors[index]) delete n.anchors[index][key];
+      });
+    });
   }
   function startResize(e, handleEl, p) {
     const dir = handleEl.getAttribute("data-handle");

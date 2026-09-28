@@ -6,7 +6,7 @@ import {
   mutate, newId, emptyTransform, findNode, findPath, topAncestor, walk,
 } from "./state.js";
 import * as history from "./history.js";
-import { toCanvasPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix, setHoverOutline, clearHoverOutline, resolveConnector, connectorMidpoint, canvasPixelScale } from "./render.js";
+import { toCanvasPoint, toLocalPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix, setHoverOutline, clearHoverOutline, resolveConnector, connectorMidpoint, canvasPixelScale } from "./render.js";
 import * as guides from "./guides.js";
 import * as grid from "./grid.js";
 import { routeStraight } from "./connectors.js";
@@ -92,6 +92,7 @@ function onPointerDown(e) {
   if (role === "resize-multi") return startResizeMulti(e, target, p);
   if (role === "rotate") return startRotate(e, target, p);
   if (role === "waypoint" || role === "waypoint-add") return startWaypointDrag(e, target, p);
+  if (role === "path-anchor" || role === "path-handle") return startPathPointDrag(e, target, p);
 
   if (currentTool === "select") return handleSelectDown(e, p, target);
 
@@ -149,6 +150,8 @@ function onPointerMove(e) {
     updateWaypoint(p, e);
   } else if (gesture.type === "pen") {
     updatePenDrag(p, e);
+  } else if (gesture.type === "path-point") {
+    updatePathPoint(e);
   } else if (gesture.type === "marquee") {
     updateMarquee(p);
   } else if (gesture.type === "connector") {
@@ -161,7 +164,8 @@ function updateHover(e) {
   if (currentTool !== "select") { setHover(null); return; }
   const role = e.target.getAttribute && e.target.getAttribute("data-role");
   if (role === "resize" || role === "resize-multi" || role === "rotate" ||
-      role === "waypoint" || role === "waypoint-add") { setHover(null); return; }
+      role === "waypoint" || role === "waypoint-add" ||
+      role === "path-anchor" || role === "path-handle") { setHover(null); return; }
   const hit = hitTest(e.target);
   const id = hit ? pickSelectionId(hit.id) : null;
   setHover(id);
@@ -209,6 +213,9 @@ function onPointerUp(e) {
   } else if (g.type === "pen") {
     finishPenAnchor(g, e);
     return; // pen path stays in progress; don't clear its rubber-band preview
+  } else if (g.type === "path-point") {
+    if (g.moved) history.commit("edit path");
+    else history.abort();
   }
 
   clearTransient();
@@ -242,6 +249,17 @@ function onDoubleClick(e) {
   const role = e.target.getAttribute && e.target.getAttribute("data-role");
   if (role === "waypoint") {
     deleteWaypoint(e.target.getAttribute("data-id"), Number(e.target.getAttribute("data-index")));
+    return;
+  }
+  // Double-click a path anchor to delete it; a control handle to retract it
+  // (turning a smooth node into a corner). Both are tool-independent, matching
+  // waypoint editing.
+  if (role === "path-anchor") {
+    deletePathAnchor(e.target.getAttribute("data-id"), Number(e.target.getAttribute("data-index")));
+    return;
+  }
+  if (role === "path-handle") {
+    retractPathHandle(e.target.getAttribute("data-id"), Number(e.target.getAttribute("data-index")), e.target.getAttribute("data-which"));
     return;
   }
   if (currentTool !== "select") return;
@@ -990,6 +1008,104 @@ export function finishPen() {
 export function cancelPen() {
   if (!penInProgress) return;
   commitPen();
+}
+
+// --- Path node editing (anchors + bézier handles on a selected pen path) ---
+//
+// The chrome lives in the path's LOCAL space (its group mirrors the node
+// transform), and node.anchors are in that same space — so pointer positions are
+// converted via the path element's matrix (toLocalPoint), not toCanvasPoint.
+//   • Dragging an anchor moves its point AND both control handles by the same
+//     delta, so the local curve shape rides along.
+//   • Dragging a control handle moves that handle; by default the opposite handle
+//     mirrors it (keeps the anchor smooth). Alt breaks the pair (corner with two
+//     independent handles) — matching Illustrator's Alt-drag-handle.
+function startPathPointDrag(e, handleEl, p) {
+  const id = handleEl.getAttribute("data-id");
+  const node = findNode(getDoc(), id);
+  if (!node || node.type !== "path" || !Array.isArray(node.anchors)) return;
+  const index = Number(handleEl.getAttribute("data-index"));
+  const kind = handleEl.getAttribute("data-role"); // "path-anchor" | "path-handle"
+  const which = handleEl.getAttribute("data-which"); // "in" | "out" (handles only)
+  const el = getDocLayer().querySelector(`[data-id="${cssEscape(id)}"]`);
+  history.beginTransaction();
+  gesture = {
+    type: "path-point",
+    origin: p, last: p, moved: false,
+    pathId: id, index, kind, which,
+    el, // path element — supplies the local matrix each frame
+  };
+}
+
+function updatePathPoint(e) {
+  const { pathId, index, kind, which, el } = gesture;
+  // Pointer → path-local coords (chrome mirrors the node transform).
+  let loc = el ? toLocalPoint(e, el) : toCanvasPoint(e);
+  // Snap anchors to the grid unless Alt bypasses; control handles stay free.
+  if (kind === "path-anchor" && grid.isSnap() && !e.altKey) {
+    const s = grid.snapPoint(loc.x, loc.y);
+    loc = s;
+  }
+  const lx = round2(loc.x), ly = round2(loc.y);
+  mutate((root) => {
+    const n = findNode(root, pathId);
+    if (!n || !Array.isArray(n.anchors) || !n.anchors[index]) return;
+    const a = n.anchors[index];
+    if (kind === "path-anchor") {
+      const dx = lx - a.x, dy = ly - a.y;
+      a.x = lx; a.y = ly;
+      if (a.cin) { a.cin.x = round2(a.cin.x + dx); a.cin.y = round2(a.cin.y + dy); }
+      if (a.cout) { a.cout.x = round2(a.cout.x + dx); a.cout.y = round2(a.cout.y + dy); }
+    } else {
+      const near = which === "in" ? "cin" : "cout";
+      const far = which === "in" ? "cout" : "cin";
+      a[near] = { x: lx, y: ly };
+      // Mirror the opposite handle about the anchor for a smooth node, unless Alt
+      // breaks the pair (independent handles → a corner with curved sides).
+      if (!e.altKey && a[far]) {
+        a[far] = { x: round2(2 * a.x - lx), y: round2(2 * a.y - ly) };
+      }
+    }
+  });
+}
+
+// Double-click an anchor to delete it. A path needs ≥2 anchors to exist; removing
+// below that deletes the whole node. A closed path that drops to 2 anchors reopens
+// (a 2-point closed path is degenerate). One history entry.
+function deletePathAnchor(id, index) {
+  const node = findNode(getDoc(), id);
+  if (!node || node.type !== "path" || !Array.isArray(node.anchors)) return;
+  if (index < 0 || index >= node.anchors.length) return;
+  history.record(() => {
+    if (node.anchors.length <= 2) {
+      mutate((root) => {
+        const idx = root.children.findIndex(c => c.id === id);
+        if (idx >= 0) root.children.splice(idx, 1);
+      });
+      clearSelection();
+      return;
+    }
+    mutate((root) => {
+      const n = findNode(root, id);
+      if (!n || !Array.isArray(n.anchors)) return;
+      n.anchors.splice(index, 1);
+      if (n.closed && n.anchors.length < 3) n.closed = false;
+    });
+  });
+}
+
+// Double-click a control handle to retract it (smooth node → corner on that side).
+function retractPathHandle(id, index, which) {
+  const node = findNode(getDoc(), id);
+  if (!node || node.type !== "path" || !Array.isArray(node.anchors)) return;
+  const key = which === "in" ? "cin" : "cout";
+  if (!node.anchors[index] || !node.anchors[index][key]) return;
+  history.record(() => {
+    mutate((root) => {
+      const n = findNode(root, id);
+      if (n && n.anchors[index]) delete n.anchors[index][key];
+    });
+  });
 }
 
 // --- Resize handle gesture ---

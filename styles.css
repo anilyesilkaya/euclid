@@ -231,6 +231,31 @@ html, body {
   fill: var(--accent);
   fill-opacity: 0.9;
 }
+/* Pen-path node editing: square anchors, round bézier-control points, and the
+   thin line tethering each control point to its anchor. */
+#chrome-layer .path-anchor-handle {
+  fill: var(--handle);
+  stroke: var(--handle-stroke);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  cursor: move;
+}
+#chrome-layer .path-anchor-handle:hover { fill: var(--accent); }
+#chrome-layer .path-ctrl-handle {
+  fill: var(--bg);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  cursor: move;
+}
+#chrome-layer .path-ctrl-handle:hover { fill: var(--accent); }
+#chrome-layer .path-ctrl-line {
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-opacity: 0.6;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
 #chrome-layer .hover-outline {
   fill: none;
   stroke: var(--accent);
