@@ -898,17 +898,13 @@ function handlePenDown(e, p) {
   }
 
   // Click near the first anchor closes the path (needs at least a triangle).
-  const node = findNode(getDoc(), penInProgress.id);
-  if (node && Array.isArray(node.anchors) && node.anchors.length >= 2) {
-    const first = node.anchors[0];
-    if (Math.hypot(p.x - first.x, p.y - first.y) <= PEN_CLOSE_PX * canvasPixelScale()) {
-      mutate((root) => {
-        const n = findNode(root, penInProgress.id);
-        if (n) n.closed = true;
-      });
-      commitPen();
-      return;
-    }
+  if (penCloseAnchor(p)) {
+    mutate((root) => {
+      const n = findNode(root, penInProgress.id);
+      if (n) n.closed = true;
+    });
+    commitPen();
+    return;
   }
 
   // Otherwise append a new anchor and arm a gesture for a drag-to-curve.
@@ -942,12 +938,36 @@ function updatePenDrag(p, e) {
 // simply continues. The rubber-band preview resumes on the next pointermove.
 function finishPenAnchor(g, e) { /* nothing to commit per-anchor */ }
 
+// Would a click at canvas point `p` close the in-progress path? Returns the first
+// anchor when yes (within PEN_CLOSE_PX and the path has ≥2 anchors), else null.
+// Shared by the click handler and the hover cue so they agree exactly.
+function penCloseAnchor(p) {
+  if (!penInProgress) return null;
+  const node = findNode(getDoc(), penInProgress.id);
+  if (!node || !Array.isArray(node.anchors) || node.anchors.length < 2) return null;
+  const first = node.anchors[0];
+  if (Math.hypot(p.x - first.x, p.y - first.y) <= PEN_CLOSE_PX * canvasPixelScale()) return first;
+  return null;
+}
+
 function ensurePenPreview() {
   if (!penInProgress || penInProgress.previewEl) return;
   const line = document.createElementNS(SVG_NS, "line");
   line.setAttribute("class", "rubber");
   penInProgress.previewEl = line;
   getTransientLayer().appendChild(line);
+}
+
+// A ring drawn over the first anchor while the pointer is close enough to close
+// the path — the Illustrator "○" pen-close cue. Created lazily; hidden otherwise.
+function ensurePenCloseHint() {
+  if (!penInProgress) return null;
+  if (penInProgress.closeHintEl) return penInProgress.closeHintEl;
+  const c = document.createElementNS(SVG_NS, "circle");
+  c.setAttribute("class", "pen-close-hint");
+  penInProgress.closeHintEl = c;
+  getTransientLayer().appendChild(c);
+  return c;
 }
 
 function updatePenPreview(p) {
@@ -957,10 +977,28 @@ function updatePenPreview(p) {
   const last = node.anchors[node.anchors.length - 1];
   const line = penInProgress.previewEl;
   if (!line) return;
+
+  // If hovering within the close threshold, snap the rubber-band to the first
+  // anchor and show the close ring over it; otherwise track the pointer.
+  const closeTo = penCloseAnchor(p);
+  const end = closeTo || p;
   line.setAttribute("x1", last.x);
   line.setAttribute("y1", last.y);
-  line.setAttribute("x2", p.x);
-  line.setAttribute("y2", p.y);
+  line.setAttribute("x2", end.x);
+  line.setAttribute("y2", end.y);
+
+  const hint = ensurePenCloseHint();
+  if (hint) {
+    if (closeTo) {
+      const r = PEN_CLOSE_PX * canvasPixelScale();
+      hint.setAttribute("cx", closeTo.x);
+      hint.setAttribute("cy", closeTo.y);
+      hint.setAttribute("r", r);
+      hint.removeAttribute("hidden");
+    } else {
+      hint.setAttribute("hidden", "");
+    }
+  }
 }
 
 // Finalize the in-progress pen path: drop a trailing anchor coincident with its

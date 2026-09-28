@@ -279,6 +279,16 @@ html, body {
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
+/* Pen "close path" cue: a ring over the first anchor when a click there would
+   close the in-progress path (Illustrator's ○ pen indicator). */
+#chrome-layer .pen-close-hint {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+#chrome-layer .pen-close-hint[hidden] { display: none; }
 #chrome-layer .align-guide {
   stroke: #ff3b6b;
   stroke-width: 1;

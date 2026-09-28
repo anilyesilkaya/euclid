@@ -1967,7 +1967,7 @@
     if (!penInProgress) {
       const id = newId("p");
       beginTransaction();
-      const node2 = {
+      const node = {
         id,
         type: "path",
         transform: emptyTransform(),
@@ -1976,24 +1976,20 @@
         attrs: { fill: "none", stroke: "#222222", "stroke-width": 2, opacity: 1 }
       };
       mutate((root) => {
-        root.children.push(node2);
+        root.children.push(node);
       });
       penInProgress = { id };
       ensurePenPreview();
       gesture = { type: "pen", origin: p, last: p, moved: false, penId: id, index: 0 };
       return;
     }
-    const node = findNode(getDoc(), penInProgress.id);
-    if (node && Array.isArray(node.anchors) && node.anchors.length >= 2) {
-      const first = node.anchors[0];
-      if (Math.hypot(p.x - first.x, p.y - first.y) <= PEN_CLOSE_PX * canvasPixelScale()) {
-        mutate((root) => {
-          const n = findNode(root, penInProgress.id);
-          if (n) n.closed = true;
-        });
-        commitPen();
-        return;
-      }
+    if (penCloseAnchor(p)) {
+      mutate((root) => {
+        const n = findNode(root, penInProgress.id);
+        if (n) n.closed = true;
+      });
+      commitPen();
+      return;
     }
     let index = 0;
     mutate((root) => {
@@ -2017,12 +2013,29 @@
   }
   function finishPenAnchor(g, e) {
   }
+  function penCloseAnchor(p) {
+    if (!penInProgress) return null;
+    const node = findNode(getDoc(), penInProgress.id);
+    if (!node || !Array.isArray(node.anchors) || node.anchors.length < 2) return null;
+    const first = node.anchors[0];
+    if (Math.hypot(p.x - first.x, p.y - first.y) <= PEN_CLOSE_PX * canvasPixelScale()) return first;
+    return null;
+  }
   function ensurePenPreview() {
     if (!penInProgress || penInProgress.previewEl) return;
     const line = document.createElementNS(SVG_NS3, "line");
     line.setAttribute("class", "rubber");
     penInProgress.previewEl = line;
     getTransientLayer().appendChild(line);
+  }
+  function ensurePenCloseHint() {
+    if (!penInProgress) return null;
+    if (penInProgress.closeHintEl) return penInProgress.closeHintEl;
+    const c = document.createElementNS(SVG_NS3, "circle");
+    c.setAttribute("class", "pen-close-hint");
+    penInProgress.closeHintEl = c;
+    getTransientLayer().appendChild(c);
+    return c;
   }
   function updatePenPreview(p) {
     if (!penInProgress) return;
@@ -2031,10 +2044,24 @@
     const last = node.anchors[node.anchors.length - 1];
     const line = penInProgress.previewEl;
     if (!line) return;
+    const closeTo = penCloseAnchor(p);
+    const end = closeTo || p;
     line.setAttribute("x1", last.x);
     line.setAttribute("y1", last.y);
-    line.setAttribute("x2", p.x);
-    line.setAttribute("y2", p.y);
+    line.setAttribute("x2", end.x);
+    line.setAttribute("y2", end.y);
+    const hint = ensurePenCloseHint();
+    if (hint) {
+      if (closeTo) {
+        const r3 = PEN_CLOSE_PX * canvasPixelScale();
+        hint.setAttribute("cx", closeTo.x);
+        hint.setAttribute("cy", closeTo.y);
+        hint.setAttribute("r", r3);
+        hint.removeAttribute("hidden");
+      } else {
+        hint.setAttribute("hidden", "");
+      }
+    }
   }
   function commitPen() {
     if (!penInProgress) return;
