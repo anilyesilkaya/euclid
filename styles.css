@@ -496,6 +496,32 @@ html, body {
 }
 #props-form .panel-btn[hidden] { display: none; }
 
+/* Text style + align: a row of small toggle buttons (Bold/Italic, align). */
+.text-style-group {
+  display: inline-flex;
+  gap: 4px;
+}
+.style-btn {
+  width: 26px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 80ms, color 80ms, border-color 80ms;
+}
+.style-btn:hover { background: #33363c; }
+.style-btn[aria-pressed="true"] {
+  background: rgba(76, 154, 255, 0.18);
+  border-color: rgba(76, 154, 255, 0.5);
+  color: var(--accent-2);
+}
+
 /* Paint-type dropdown (Solid / Linear) sits inline before the color swatch. */
 #props-form select.paint-type {
   flex: 1 1 auto;

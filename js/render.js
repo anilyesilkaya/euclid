@@ -139,6 +139,8 @@ function connectorLabelElement(node, mid) {
   t.setAttribute("font-family", style["font-family"] || "sans-serif");
   t.setAttribute("font-size", style["font-size"] || 16);
   t.setAttribute("fill", style.fill || "#000000");
+  if (style["font-weight"]) t.setAttribute("font-weight", style["font-weight"]);
+  if (style["font-style"]) t.setAttribute("font-style", style["font-style"]);
   t.setAttribute("stroke", "#ffffff");
   t.setAttribute("stroke-width", 3);
   t.setAttribute("stroke-linejoin", "round");
@@ -267,6 +269,8 @@ function labelElement(ownerNode, bbox) {
   t.setAttribute("font-family", ownerNode.labelStyle?.["font-family"] || "sans-serif");
   t.setAttribute("font-size", ownerNode.labelStyle?.["font-size"] || 16);
   t.setAttribute("fill", ownerNode.labelStyle?.fill || "#000000");
+  if (ownerNode.labelStyle?.["font-weight"]) t.setAttribute("font-weight", ownerNode.labelStyle["font-weight"]);
+  if (ownerNode.labelStyle?.["font-style"]) t.setAttribute("font-style", ownerNode.labelStyle["font-style"]);
   t.setAttribute("pointer-events", "none");
   t.textContent = ownerNode.label;
   return t;
