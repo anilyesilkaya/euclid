@@ -231,7 +231,7 @@
   <div id="import-modal" class="modal" hidden aria-modal="true" role="dialog" aria-labelledby="import-title">
     <div class="modal-card">
       <h3 id="import-title">Import SVG</h3>
-      <p class="modal-hint">Paste SVG markup. Illustrator exports with class-based styles work. Gradients, patterns, filters, clip paths, masks, &lt;use&gt;, &lt;image&gt;, and non-rigid transforms (scale/skew) will cause the import to fail.</p>
+      <p class="modal-hint">Paste SVG markup. Illustrator exports with class-based styles work. Linear gradients are supported; radial gradients, patterns, filters, clip paths, masks, &lt;use&gt;, &lt;image&gt;, and non-rigid transforms (scale/skew) will cause the import to fail.</p>
       <textarea id="import-text" spellcheck="false" placeholder="<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; viewBox=&quot;0 0 200 100&quot;>&#10;  <rect x=&quot;10&quot; y=&quot;10&quot; width=&quot;80&quot; height=&quot;80&quot; fill=&quot;#88ccee&quot;/>&#10;</svg>"></textarea>
       <div class="modal-row">
         <label class="chk"><input type="radio" name="import-mode" value="append" checked> Append</label>

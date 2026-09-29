@@ -4715,8 +4715,8 @@
   var SUPPORTED_SHAPES = /* @__PURE__ */ new Set(["rect", "circle", "ellipse", "line", "polyline", "text", "path"]);
   var SUPPORTED_CONTAINERS = /* @__PURE__ */ new Set(["g"]);
   var IGNORABLE = /* @__PURE__ */ new Set(["title", "desc", "metadata", "style", "defs"]);
+  var COLLECTED_ELEMENTS = /* @__PURE__ */ new Set(["linearGradient"]);
   var PAINT_SERVER_ELEMENTS = /* @__PURE__ */ new Set([
-    "linearGradient",
     "radialGradient",
     "pattern",
     "filter",
@@ -4772,7 +4772,8 @@
     if (!root || root.localName !== "svg") {
       throw new ImportError(`Root element must be <svg> (got <${root?.localName || "empty"}>)`);
     }
-    preflightRejectPaintServers(root);
+    const gradients = collectLinearGradients(root);
+    preflightRejectPaintServers(root, gradients);
     inlineStyleClasses(root);
     const nodes = [];
     for (const child of Array.from(root.children)) {
@@ -4780,36 +4781,145 @@
       if (parsed) nodes.push(parsed);
     }
     if (nodes.length === 0) throw new ImportError("No supported elements found");
+    for (const n of nodes) resolveGradientRefs(n, gradients);
     return nodes;
   }
-  function preflightRejectPaintServers(root) {
+  function preflightRejectPaintServers(root, gradients) {
+    const resolves = (v) => {
+      const id = paintRefId(v);
+      return id != null && gradients.has(id);
+    };
     const stack = [root];
     while (stack.length) {
       const el = stack.pop();
       for (const child of Array.from(el.children)) {
         const name = child.localName;
+        if (COLLECTED_ELEMENTS.has(name)) continue;
         if (PAINT_SERVER_ELEMENTS.has(name)) {
           throw new ImportError(
-            `<${name}> is not supported \u2014 gradients, patterns, filters, clip paths, masks, <use>, and <image> can't be represented in this editor's model.`
+            `<${name}> is not supported \u2014 radial gradients, patterns, filters, clip paths, masks, <use>, and <image> can't be represented in this editor's model.`
           );
         }
         for (const key of ["fill", "stroke"]) {
           const v = child.getAttribute(key);
-          if (v && /url\s*\(/i.test(v)) {
+          if (v && /url\s*\(/i.test(v) && !resolves(v)) {
             throw new ImportError(
-              `${key}="${v}" references a paint server (gradient/pattern) \u2014 not supported.`
+              `${key}="${v}" references an unsupported paint server (only linear gradients are supported).`
             );
           }
         }
         const style = child.getAttribute("style");
         if (style && /url\s*\(/i.test(style)) {
-          throw new ImportError(
-            `style="${style.slice(0, 80)}..." references a paint server (gradient/pattern) \u2014 not supported.`
-          );
+          const refs = style.match(/url\s*\([^)]*\)/gi) || [];
+          if (!refs.every(resolves)) {
+            throw new ImportError(
+              `style="${style.slice(0, 80)}..." references an unsupported paint server (only linear gradients are supported).`
+            );
+          }
         }
         stack.push(child);
       }
     }
+  }
+  function paintRefId(v) {
+    if (typeof v !== "string") return null;
+    const m = /url\s*\(\s*['"]?#([^'")\s]+)['"]?\s*\)/i.exec(v);
+    return m ? m[1] : null;
+  }
+  function collectLinearGradients(root) {
+    const byId = /* @__PURE__ */ new Map();
+    const els = root.getElementsByTagName("linearGradient");
+    for (const el of Array.from(els)) {
+      const id = el.getAttribute("id");
+      if (id) byId.set(id, el);
+    }
+    const out = /* @__PURE__ */ new Map();
+    for (const [id, el] of byId) {
+      const def = linearGradientToDef(el, byId);
+      if (def) out.set(id, def);
+    }
+    return out;
+  }
+  function linearGradientToDef(el, byId) {
+    let stopHost = el;
+    let stops = readStops(el);
+    if (stops.length === 0) {
+      const href = el.getAttribute("href") || el.getAttribute("xlink:href");
+      const refId = href && href.startsWith("#") ? href.slice(1) : null;
+      if (refId && byId.has(refId)) {
+        stopHost = byId.get(refId);
+        stops = readStops(stopHost);
+      }
+    }
+    if (stops.length < 2) return null;
+    return { type: "linear", angle: linearGradientAngle(el), stops };
+  }
+  function readStops(el) {
+    const out = [];
+    for (const s of Array.from(el.children)) {
+      if (s.localName !== "stop") continue;
+      let offset = parseFloat(s.getAttribute("offset"));
+      if (!Number.isFinite(offset)) offset = 0;
+      if (String(s.getAttribute("offset")).includes("%")) offset /= 100;
+      if (offset > 1) offset /= 100;
+      const style = parseInlineStyle(s.getAttribute("style"));
+      const color = s.getAttribute("stop-color") || style["stop-color"] || "#000000";
+      const opRaw = s.getAttribute("stop-opacity") || style["stop-opacity"];
+      const opacity = opRaw != null && opRaw !== "" ? clamp012(parseFloat(opRaw)) : 1;
+      out.push({ offset: clamp012(offset), color, opacity: Number.isFinite(opacity) ? opacity : 1 });
+    }
+    return out;
+  }
+  function linearGradientAngle(el) {
+    const num2 = (k, d) => {
+      const raw = el.getAttribute(k);
+      if (raw == null) return d;
+      let n = parseFloat(raw);
+      if (!Number.isFinite(n)) return d;
+      if (String(raw).includes("%")) n /= 100;
+      return n;
+    };
+    const x1 = num2("x1", 0), y1 = num2("y1", 0), x2 = num2("x2", 1), y2 = num2("y2", 0);
+    let base = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+    const gt = el.getAttribute("gradientTransform");
+    if (gt) {
+      const m = /rotate\s*\(\s*(-?[\d.]+)/.exec(gt);
+      if (m) base += parseFloat(m[1]);
+    }
+    return (Math.round(base) % 360 + 360) % 360;
+  }
+  function resolveGradientRefs(node, gradients) {
+    if (!node || typeof node !== "object") return;
+    if (node.attrs) {
+      for (const slot of ["fill", "stroke"]) {
+        const id = paintRefId(node.attrs[slot]);
+        if (id != null && gradients.has(id)) {
+          if (!node.gradients) node.gradients = {};
+          node.gradients[slot] = cloneGradient(gradients.get(id));
+          node.attrs[slot] = node.gradients[slot].stops[0]?.color || "#000000";
+        }
+      }
+    }
+    if (Array.isArray(node.children)) for (const c of node.children) resolveGradientRefs(c, gradients);
+  }
+  function cloneGradient(g) {
+    return { type: g.type, angle: g.angle, stops: g.stops.map((s) => ({ ...s })) };
+  }
+  function parseInlineStyle(style) {
+    const out = {};
+    if (!style) return out;
+    for (const decl of style.split(";")) {
+      const idx = decl.indexOf(":");
+      if (idx < 0) continue;
+      const k = decl.slice(0, idx).trim();
+      const v = decl.slice(idx + 1).trim();
+      if (k && v) out[k] = v;
+    }
+    return out;
+  }
+  function clamp012(n) {
+    if (!Number.isFinite(n)) return 0;
+    return n < 0 ? 0 : n > 1 ? 1 : n;
   }
   function inlineStyleClasses(root) {
     const styleEls = root.getElementsByTagName("style");
