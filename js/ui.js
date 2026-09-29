@@ -41,6 +41,7 @@ let pText, pFontSize, pFontFamily, pTextColor, pRotation;
 let pConnectorRoute, connectorDivider, connectorRouteRow;
 let pArrowStart, pArrowEnd, connectorArrowStartRow, connectorArrowEndRow;
 let pathDivider, pShapeToggle, pathCornerRow, pCornerRadius, pCornerRadiusNum;
+let rectDivider, rectCornerRow, pRectRadius, pRectRadiusNum;
 let pFillType, pStrokeType, fillNoneRow, strokeNoneRow;
 let gradEditors = {}; // slot -> { root, preview, angle, angleNum, stops, add }
 let clipboard = null;
@@ -257,6 +258,10 @@ function wireProperties(root) {
   pathCornerRow = root.querySelector("#path-corner-row");
   pCornerRadius = root.querySelector("#p-corner-radius");
   pCornerRadiusNum = root.querySelector("#p-corner-radius-num");
+  rectDivider = root.querySelector("#rect-divider");
+  rectCornerRow = root.querySelector("#rect-corner-row");
+  pRectRadius = root.querySelector("#p-rect-radius");
+  pRectRadiusNum = root.querySelector("#p-rect-radius-num");
   pFillType = root.querySelector("#p-fill-type");
   pStrokeType = root.querySelector("#p-stroke-type");
   fillNoneRow = root.querySelector("#fill-none-row");
@@ -340,6 +345,28 @@ function wireProperties(root) {
     pCornerRadiusNum.value = v;
     pCornerRadius.value = v;
     historyCommitAfter(() => applyCornerRadius(v));
+  });
+
+  // Rectangle corner radius (rx/ry on rect nodes). Same live-preview + one-entry
+  // pattern as the closed-path radius; slider and number box mirror each other.
+  pRectRadius.addEventListener("pointerdown", () => history.beginTransaction());
+  pRectRadius.addEventListener("input", () => {
+    pRectRadiusNum.value = pRectRadius.value;
+    history.ensureTransaction();
+    applyRectRadius(Number(pRectRadius.value));
+  });
+  pRectRadius.addEventListener("change", () => historyCommitAfter(() => applyRectRadius(Number(pRectRadius.value))));
+  pRectRadiusNum.addEventListener("input", () => {
+    const v = Math.max(0, Number(pRectRadiusNum.value) || 0);
+    history.ensureTransaction();
+    pRectRadius.value = v;
+    applyRectRadius(v);
+  });
+  pRectRadiusNum.addEventListener("change", () => {
+    const v = Math.max(0, Number(pRectRadiusNum.value) || 0);
+    pRectRadiusNum.value = v;
+    pRectRadius.value = v;
+    historyCommitAfter(() => applyRectRadius(v));
   });
 
   pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
@@ -483,6 +510,37 @@ function applyCornerRadius(value) {
       else delete n.cornerRadius;
     }
   });
+}
+
+// Corner radius for rect nodes (rx/ry). Applies to every selected rect and to
+// rects inside a selected group; a radius of 0 clears the rounding. Clamped to
+// half the shorter side so it can't exceed a full pill.
+function applyRectRadius(value) {
+  const r = Math.max(0, Number(value) || 0);
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  mutate((root) => {
+    for (const id of ids) {
+      const n = findNode(root, id);
+      if (!n) continue;
+      const rects = n.type === "group"
+        ? collectByType(n, "rect")
+        : (n.type === "rect" ? [n] : []);
+      for (const rect of rects) {
+        const cap = Math.min(rect.attrs.width || 0, rect.attrs.height || 0) / 2;
+        const rr = Math.min(r, cap);
+        if (rr > 0) { rect.attrs.rx = rr; rect.attrs.ry = rr; }
+        else { delete rect.attrs.rx; delete rect.attrs.ry; }
+      }
+    }
+  });
+}
+
+// All descendant shape nodes of `node` matching `type` (node itself if it matches).
+function collectByType(node, type) {
+  const out = [];
+  walk(node, (n) => { if (n.type === type) out.push(n); });
+  return out;
 }
 
 function applyRotation(deg) {
@@ -831,6 +889,17 @@ export function refreshPropertyPanel() {
       pCornerRadiusNum.value = cr;
     }
   }
+
+  // Rectangle section: show when the selection contains at least one rect (a rect
+  // node, or a group with rects inside). Reflect the first rect's corner radius.
+  const sampleRect = firstOfType(doc, ids, "rect");
+  if (rectDivider) rectDivider.hidden = !sampleRect;
+  if (rectCornerRow) rectCornerRow.hidden = !sampleRect;
+  if (sampleRect && document.activeElement !== pRectRadius && document.activeElement !== pRectRadiusNum) {
+    const rr = sampleRect.attrs.rx || 0;
+    pRectRadius.value = rr;
+    pRectRadiusNum.value = rr;
+  }
   let sample = null;
   for (const id of ids) {
     const n = findNode(doc, id);
@@ -894,6 +963,17 @@ function firstShape(node) {
   for (const c of node.children) {
     const s = firstShape(c);
     if (s) return s;
+  }
+  return null;
+}
+
+// First node of `type` across a selection (descending into groups), or null.
+function firstOfType(doc, ids, type) {
+  for (const id of ids) {
+    const n = findNode(doc, id);
+    if (!n) continue;
+    const hits = collectByType(n, type);
+    if (hits.length) return hits[0];
   }
   return null;
 }
