@@ -335,8 +335,102 @@
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
   }
 
-  // js/render.js
+  // js/paint.js
   var SVG_NS = "http://www.w3.org/2000/svg";
+  var PAINT_SLOTS = ["fill", "stroke"];
+  function getGradient(node, slot) {
+    const g = node && node.gradients && node.gradients[slot];
+    return isValidGradient(g) ? g : null;
+  }
+  function hasGradient(node, slot) {
+    return getGradient(node, slot) !== null;
+  }
+  function isValidGradient(g) {
+    return !!g && g.type === "linear" && Array.isArray(g.stops) && g.stops.length >= 2;
+  }
+  function gradientId(nodeId, slot) {
+    return `eg-${nodeId}-${slot}`;
+  }
+  function paintRef(node, slot) {
+    return hasGradient(node, slot) ? `url(#${gradientId(node.id, slot)})` : null;
+  }
+  function normalizeGradient(g) {
+    if (!isValidGradient(g)) return null;
+    const stops = g.stops.map((s) => ({
+      offset: clamp01(num(s.offset, 0)),
+      color: normalizeHex(s.color) || "#000000",
+      opacity: clamp01(num(s.opacity, 1))
+    })).sort((a, b) => a.offset - b.offset);
+    return { type: "linear", angle: num(g.angle, 0), stops };
+  }
+  function linearGradientElement(def, id) {
+    const g = normalizeGradient(def);
+    if (!g) return null;
+    const grad = document.createElementNS(SVG_NS, "linearGradient");
+    grad.setAttribute("id", id);
+    grad.setAttribute("x1", "0");
+    grad.setAttribute("y1", "0");
+    grad.setAttribute("x2", "1");
+    grad.setAttribute("y2", "0");
+    if (g.angle) grad.setAttribute("gradientTransform", `rotate(${round2(g.angle)} 0.5 0.5)`);
+    for (const s of g.stops) {
+      const stop = document.createElementNS(SVG_NS, "stop");
+      stop.setAttribute("offset", round2(s.offset));
+      stop.setAttribute("stop-color", s.color);
+      if (s.opacity !== 1) stop.setAttribute("stop-opacity", round2(s.opacity));
+      grad.appendChild(stop);
+    }
+    return grad;
+  }
+  function linearGradientMarkup(def, id, pad, indentUnit) {
+    const g = normalizeGradient(def);
+    if (!g) return [];
+    const attrs = [`id="${id}"`, `x1="0"`, `y1="0"`, `x2="1"`, `y2="0"`];
+    if (g.angle) attrs.push(`gradientTransform="rotate(${round2(g.angle)} 0.5 0.5)"`);
+    const out = [`${pad}<linearGradient ${attrs.join(" ")}>`];
+    for (const s of g.stops) {
+      const sa = [`offset="${round2(s.offset)}"`, `stop-color="${s.color}"`];
+      if (s.opacity !== 1) sa.push(`stop-opacity="${round2(s.opacity)}"`);
+      out.push(`${pad}${indentUnit}<stop ${sa.join(" ")}/>`);
+    }
+    out.push(`${pad}</linearGradient>`);
+    return out;
+  }
+  function collectGradients(root) {
+    const out = [];
+    (function rec(node) {
+      if (!node || typeof node !== "object") return;
+      for (const slot of PAINT_SLOTS) {
+        const def = getGradient(node, slot);
+        if (def) out.push({ id: gradientId(node.id, slot), slot, def });
+      }
+      if (Array.isArray(node.children)) for (const c of node.children) rec(c);
+    })(root);
+    return out;
+  }
+  function num(v, d) {
+    const n = typeof v === "number" ? v : parseFloat(v);
+    return Number.isFinite(n) ? n : d;
+  }
+  function clamp01(n) {
+    return n < 0 ? 0 : n > 1 ? 1 : n;
+  }
+  function round2(n) {
+    if (typeof n !== "number") return n;
+    return Math.abs(n) < 1e-9 ? 0 : Math.round(n * 1e3) / 1e3;
+  }
+  function normalizeHex(v) {
+    if (typeof v !== "string") return null;
+    const s = v.trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
+    if (/^#[0-9a-fA-F]{3}$/.test(s)) {
+      return ("#" + s[1] + s[1] + s[2] + s[2] + s[3] + s[3]).toLowerCase();
+    }
+    return null;
+  }
+
+  // js/render.js
+  var SVG_NS2 = "http://www.w3.org/2000/svg";
   var HANDLE_SIZE = 8;
   var ROT_STEM_LEN = 24;
   var docLayer;
@@ -348,11 +442,11 @@
     canvasSvg = svg3;
     docLayer = svg3.querySelector("#doc-layer");
     const chrome = svg3.querySelector("#chrome-layer");
-    chromeHover = document.createElementNS(SVG_NS, "g");
+    chromeHover = document.createElementNS(SVG_NS2, "g");
     chromeHover.setAttribute("id", "chrome-hover");
-    chromeSelection = document.createElementNS(SVG_NS, "g");
+    chromeSelection = document.createElementNS(SVG_NS2, "g");
     chromeSelection.setAttribute("id", "chrome-selection");
-    chromeTransient = document.createElementNS(SVG_NS, "g");
+    chromeTransient = document.createElementNS(SVG_NS2, "g");
     chromeTransient.setAttribute("id", "chrome-transient");
     chrome.appendChild(chromeHover);
     chrome.appendChild(chromeSelection);
@@ -371,10 +465,10 @@
     if (!el) return;
     const box = safeBBox(el);
     if (!(box.width > 0 || box.height > 0)) return;
-    const wrap = document.createElementNS(SVG_NS, "g");
+    const wrap = document.createElementNS(SVG_NS2, "g");
     const t = el.getAttribute("transform");
     if (t) wrap.setAttribute("transform", t);
-    const outline = document.createElementNS(SVG_NS, "rect");
+    const outline = document.createElementNS(SVG_NS2, "rect");
     outline.setAttribute("class", "hover-outline");
     outline.setAttribute("x", box.x);
     outline.setAttribute("y", box.y);
@@ -394,6 +488,7 @@
   function renderDoc() {
     while (docLayer.firstChild) docLayer.removeChild(docLayer.firstChild);
     const doc2 = getDoc();
+    renderGradientDefs(doc2);
     const connectorNodes = [];
     for (const child of doc2.children) {
       if (child.type === "connector") {
@@ -412,6 +507,16 @@
       }
     }
   }
+  function renderGradientDefs(doc2) {
+    const grads = collectGradients(doc2);
+    if (!grads.length) return;
+    const defs = document.createElementNS(SVG_NS2, "defs");
+    for (const g of grads) {
+      const el = linearGradientElement(g.def, g.id);
+      if (el) defs.appendChild(el);
+    }
+    docLayer.appendChild(defs);
+  }
   function connectorElement(node, geom) {
     const el = geom.points ? polylineConnector(geom.points) : lineConnector(geom);
     el.setAttribute("data-id", node.id);
@@ -426,12 +531,12 @@
   }
   function connectorLabelElement(node, mid) {
     const style = node.labelStyle || {};
-    const t = document.createElementNS(SVG_NS, "text");
+    const t = document.createElementNS(SVG_NS2, "text");
     t.setAttribute("data-id", node.id);
     t.setAttribute("data-role", "label");
     t.setAttribute("data-owner", node.id);
-    t.setAttribute("x", round2(mid.x));
-    t.setAttribute("y", round2(mid.y));
+    t.setAttribute("x", round3(mid.x));
+    t.setAttribute("y", round3(mid.y));
     t.setAttribute("text-anchor", "middle");
     t.setAttribute("dominant-baseline", "middle");
     t.setAttribute("font-family", style["font-family"] || "sans-serif");
@@ -472,16 +577,16 @@
     return null;
   }
   function lineConnector(geom) {
-    const line = document.createElementNS(SVG_NS, "line");
-    line.setAttribute("x1", round2(geom.x1));
-    line.setAttribute("y1", round2(geom.y1));
-    line.setAttribute("x2", round2(geom.x2));
-    line.setAttribute("y2", round2(geom.y2));
+    const line = document.createElementNS(SVG_NS2, "line");
+    line.setAttribute("x1", round3(geom.x1));
+    line.setAttribute("y1", round3(geom.y1));
+    line.setAttribute("x2", round3(geom.x2));
+    line.setAttribute("y2", round3(geom.y2));
     return line;
   }
   function polylineConnector(points) {
-    const pl = document.createElementNS(SVG_NS, "polyline");
-    pl.setAttribute("points", points.map(([x, y]) => `${round2(x)},${round2(y)}`).join(" "));
+    const pl = document.createElementNS(SVG_NS2, "polyline");
+    pl.setAttribute("points", points.map(([x, y]) => `${round3(x)},${round3(y)}`).join(" "));
     pl.setAttribute("fill", "none");
     return pl;
   }
@@ -505,22 +610,22 @@
   }
   function nodeToElement(node) {
     if (node.type === "group") {
-      const g = document.createElementNS(SVG_NS, "g");
+      const g = document.createElementNS(SVG_NS2, "g");
       applyCommon(g, node);
       for (const child of node.children) g.appendChild(nodeToElement(child));
       if (node.label) g.appendChild(labelElement(node, bboxOfGroupChildren(node)));
       return g;
     }
     if (node.type === "text") {
-      const el2 = document.createElementNS(SVG_NS, "text");
+      const el2 = document.createElementNS(SVG_NS2, "text");
       applyCommon(el2, node);
       el2.textContent = node.text ?? "";
       return el2;
     }
-    const el = document.createElementNS(SVG_NS, node.type);
+    const el = document.createElementNS(SVG_NS2, node.type);
     applyCommon(el, node);
     if (node.label) {
-      const wrap = document.createElementNS(SVG_NS, "g");
+      const wrap = document.createElementNS(SVG_NS2, "g");
       wrap.setAttribute("data-id", node.id);
       wrap.setAttribute("data-wrapper", "label");
       const tstr = transformToString(node.transform);
@@ -535,13 +640,13 @@
     return el;
   }
   function labelElement(ownerNode, bbox) {
-    const t = document.createElementNS(SVG_NS, "text");
+    const t = document.createElementNS(SVG_NS2, "text");
     t.setAttribute("data-role", "label");
     t.setAttribute("data-owner", ownerNode.id);
     const cx = bbox.x + bbox.width / 2;
     const cy = bbox.y + bbox.height / 2;
-    t.setAttribute("x", round2(cx));
-    t.setAttribute("y", round2(cy));
+    t.setAttribute("x", round3(cx));
+    t.setAttribute("y", round3(cy));
     t.setAttribute("text-anchor", "middle");
     t.setAttribute("dominant-baseline", "middle");
     t.setAttribute("font-family", ownerNode.labelStyle?.["font-family"] || "sans-serif");
@@ -609,27 +714,32 @@
     for (const [k, v] of Object.entries(node.attrs)) {
       if (v === void 0 || v === null || v === "") continue;
       if (k === "d" && derivedD !== null) continue;
+      if ((k === "fill" || k === "stroke") && paintRef(node, k)) continue;
       el.setAttribute(k, formatAttr(k, v));
     }
     if (derivedD !== null) el.setAttribute("d", derivedD);
+    for (const slot of PAINT_SLOTS) {
+      const ref = paintRef(node, slot);
+      if (ref) el.setAttribute(slot, ref);
+    }
     const t = transformToString(node.transform);
     if (t) el.setAttribute("transform", t);
   }
   function formatAttr(k, v) {
     if (k === "points" && Array.isArray(v)) {
-      return v.map((p) => `${round2(p[0])},${round2(p[1])}`).join(" ");
+      return v.map((p) => `${round3(p[0])},${round3(p[1])}`).join(" ");
     }
-    if (typeof v === "number") return round2(v);
+    if (typeof v === "number") return round3(v);
     return String(v);
   }
   function transformToString(t) {
     if (!t) return "";
     const parts = [];
-    if (t.tx || t.ty) parts.push(`translate(${round2(t.tx)},${round2(t.ty)})`);
-    if (t.rot) parts.push(`rotate(${round2(t.rot)},${round2(t.cx)},${round2(t.cy)})`);
+    if (t.tx || t.ty) parts.push(`translate(${round3(t.tx)},${round3(t.ty)})`);
+    if (t.rot) parts.push(`rotate(${round3(t.rot)},${round3(t.cx)},${round3(t.cy)})`);
     return parts.join(" ");
   }
-  function round2(n) {
+  function round3(n) {
     if (typeof n !== "number") return n;
     return Math.abs(n) < 1e-9 ? 0 : Math.round(n * 1e3) / 1e3;
   }
@@ -664,7 +774,7 @@
   var WAYPOINT_MIN_SEG = 12;
   function drawConnectorSelection(id, el) {
     const isPolyline = el.tagName.toLowerCase() === "polyline";
-    const overlay = document.createElementNS(SVG_NS, isPolyline ? "polyline" : "line");
+    const overlay = document.createElementNS(SVG_NS2, isPolyline ? "polyline" : "line");
     overlay.setAttribute("class", "connector-selected");
     if (isPolyline) {
       overlay.setAttribute("points", el.getAttribute("points"));
@@ -685,7 +795,7 @@
     const wps = Array.isArray(node.waypoints) ? node.waypoints : [];
     wps.forEach((w, i) => {
       if (!w || !isFinite(w.x) || !isFinite(w.y)) return;
-      const h = document.createElementNS(SVG_NS, "rect");
+      const h = document.createElementNS(SVG_NS2, "rect");
       h.setAttribute("class", "waypoint-handle");
       h.setAttribute("data-role", "waypoint");
       h.setAttribute("data-id", id);
@@ -704,7 +814,7 @@
       if (Math.hypot(x2 - x1, y2 - y1) < WAYPOINT_MIN_SEG) continue;
       const mx = (x1 + x2) / 2;
       const my = (y1 + y2) / 2;
-      const c = document.createElementNS(SVG_NS, "circle");
+      const c = document.createElementNS(SVG_NS2, "circle");
       c.setAttribute("class", "waypoint-add-handle");
       c.setAttribute("data-role", "waypoint-add");
       c.setAttribute("data-id", id);
@@ -716,13 +826,13 @@
     }
   }
   function drawPathSelection({ id, el }, node) {
-    const wrap = document.createElementNS(SVG_NS, "g");
+    const wrap = document.createElementNS(SVG_NS2, "g");
     wrap.setAttribute("data-role", "path-edit");
     wrap.setAttribute("data-id", id);
     const t = el.getAttribute("transform");
     if (t) wrap.setAttribute("transform", t);
     chromeSelection.appendChild(wrap);
-    const outline = document.createElementNS(SVG_NS, "path");
+    const outline = document.createElementNS(SVG_NS2, "path");
     outline.setAttribute("class", "connector-selected");
     outline.setAttribute("d", el.getAttribute("d") || "");
     outline.setAttribute("fill", "none");
@@ -735,14 +845,14 @@
       for (const which of ["cin", "cout"]) {
         const c = a[which];
         if (!c || !isFinite(c.x) || !isFinite(c.y)) continue;
-        const line = document.createElementNS(SVG_NS, "line");
+        const line = document.createElementNS(SVG_NS2, "line");
         line.setAttribute("class", "path-ctrl-line");
         line.setAttribute("x1", a.x);
         line.setAttribute("y1", a.y);
         line.setAttribute("x2", c.x);
         line.setAttribute("y2", c.y);
         wrap.appendChild(line);
-        const dot = document.createElementNS(SVG_NS, "circle");
+        const dot = document.createElementNS(SVG_NS2, "circle");
         dot.setAttribute("class", "path-ctrl-handle");
         dot.setAttribute("data-role", "path-handle");
         dot.setAttribute("data-id", id);
@@ -756,7 +866,7 @@
     });
     anchors.forEach((a, i) => {
       if (!a || !isFinite(a.x) || !isFinite(a.y)) return;
-      const h = document.createElementNS(SVG_NS, "rect");
+      const h = document.createElementNS(SVG_NS2, "rect");
       h.setAttribute("class", "path-anchor-handle");
       h.setAttribute("data-role", "path-anchor");
       h.setAttribute("data-id", id);
@@ -769,12 +879,12 @@
     });
   }
   function drawSingleSelectionChrome({ id, el, box }) {
-    const wrap = document.createElementNS(SVG_NS, "g");
+    const wrap = document.createElementNS(SVG_NS2, "g");
     wrap.setAttribute("data-role", "selection");
     wrap.setAttribute("data-id", id);
     const t = el.getAttribute("transform");
     if (t) wrap.setAttribute("transform", t);
-    const outline = document.createElementNS(SVG_NS, "rect");
+    const outline = document.createElementNS(SVG_NS2, "rect");
     outline.setAttribute("class", "selection-outline");
     outline.setAttribute("x", box.x);
     outline.setAttribute("y", box.y);
@@ -796,7 +906,7 @@
       ["w", box.x, cy]
     ];
     for (const [dir, px, py] of positions) {
-      const h = document.createElementNS(SVG_NS, "rect");
+      const h = document.createElementNS(SVG_NS2, "rect");
       h.setAttribute("class", `handle ${dir}`);
       h.setAttribute("data-role", "resize");
       h.setAttribute("data-handle", dir);
@@ -808,14 +918,14 @@
       wrap.appendChild(h);
     }
     const rotY = box.y - ROT_STEM_LEN * scale;
-    const stem = document.createElementNS(SVG_NS, "line");
+    const stem = document.createElementNS(SVG_NS2, "line");
     stem.setAttribute("class", "rot-stem");
     stem.setAttribute("x1", cx);
     stem.setAttribute("y1", box.y);
     stem.setAttribute("x2", cx);
     stem.setAttribute("y2", rotY);
     wrap.appendChild(stem);
-    const rot = document.createElementNS(SVG_NS, "circle");
+    const rot = document.createElementNS(SVG_NS2, "circle");
     rot.setAttribute("class", "rot-handle");
     rot.setAttribute("data-role", "rotate");
     rot.setAttribute("data-id", id);
@@ -843,11 +953,11 @@
       }
     }
     if (!isFinite(minX)) return;
-    const wrap = document.createElementNS(SVG_NS, "g");
+    const wrap = document.createElementNS(SVG_NS2, "g");
     wrap.setAttribute("data-role", "selection-multi");
     const w = maxX - minX;
     const h = maxY - minY;
-    const outline = document.createElementNS(SVG_NS, "rect");
+    const outline = document.createElementNS(SVG_NS2, "rect");
     outline.setAttribute("class", "selection-outline");
     outline.setAttribute("x", minX);
     outline.setAttribute("y", minY);
@@ -868,7 +978,7 @@
       ["w", minX, cy]
     ];
     for (const [dir, px, py] of positions) {
-      const hnd = document.createElementNS(SVG_NS, "rect");
+      const hnd = document.createElementNS(SVG_NS2, "rect");
       hnd.setAttribute("class", `handle ${dir}`);
       hnd.setAttribute("data-role", "resize-multi");
       hnd.setAttribute("data-handle", dir);
@@ -1016,7 +1126,7 @@
   }
 
   // js/guides.js
-  var SVG_NS2 = "http://www.w3.org/2000/svg";
+  var SVG_NS3 = "http://www.w3.org/2000/svg";
   var CLASS = "align-guide";
   var TICK_CLASS = "align-tick";
   var TICK_HALF = 4;
@@ -1131,7 +1241,7 @@
     clearGuides();
     const layer = getTransientLayer();
     for (const g of guides) {
-      const line = document.createElementNS(SVG_NS2, "line");
+      const line = document.createElementNS(SVG_NS3, "line");
       line.setAttribute("class", `${CLASS} ${g.kind === "center" ? "center" : "edge"}`);
       if (g.orient === "v") {
         line.setAttribute("x1", g.x);
@@ -1151,14 +1261,14 @@
     }
   }
   function centerTick(cx, cy) {
-    const g = document.createElementNS(SVG_NS2, "g");
+    const g = document.createElementNS(SVG_NS3, "g");
     g.setAttribute("class", TICK_CLASS);
-    const h = document.createElementNS(SVG_NS2, "line");
+    const h = document.createElementNS(SVG_NS3, "line");
     h.setAttribute("x1", cx - TICK_HALF);
     h.setAttribute("y1", cy);
     h.setAttribute("x2", cx + TICK_HALF);
     h.setAttribute("y2", cy);
-    const v = document.createElementNS(SVG_NS2, "line");
+    const v = document.createElementNS(SVG_NS3, "line");
     v.setAttribute("x1", cx);
     v.setAttribute("y1", cy - TICK_HALF);
     v.setAttribute("x2", cx);
@@ -1277,7 +1387,7 @@
   var SNAP_THRESHOLD = 6;
   var DRAG_THRESHOLD = 3;
   var hoveredId = null;
-  var SVG_NS3 = "http://www.w3.org/2000/svg";
+  var SVG_NS4 = "http://www.w3.org/2000/svg";
   var DEFAULT_STYLE = {
     fill: "#88ccee",
     stroke: "#222222",
@@ -1668,7 +1778,7 @@
   }
   function startMarquee(p) {
     gesture = { type: "marquee", origin: p, last: p, moved: false };
-    const rect = document.createElementNS(SVG_NS3, "rect");
+    const rect = document.createElementNS(SVG_NS4, "rect");
     rect.setAttribute("class", "marquee");
     rect.setAttribute("x", p.x);
     rect.setAttribute("y", p.y);
@@ -1823,7 +1933,7 @@
       fromAnchor: fromId ? anchorOfShape(fromId) : { x: p.x, y: p.y },
       toId: null
     };
-    const line = document.createElementNS(SVG_NS3, "line");
+    const line = document.createElementNS(SVG_NS4, "line");
     line.setAttribute("class", "connector-preview");
     gesture.previewEl = line;
     getTransientLayer().appendChild(line);
@@ -1966,7 +2076,7 @@
   function ensurePolylinePreview() {
     if (!polylineInProgress) return;
     if (polylineInProgress.previewEl) return;
-    const line = document.createElementNS(SVG_NS3, "line");
+    const line = document.createElementNS(SVG_NS4, "line");
     line.setAttribute("class", "rubber");
     polylineInProgress.previewEl = line;
     getTransientLayer().appendChild(line);
@@ -2079,7 +2189,7 @@
   }
   function ensurePenPreview() {
     if (!penInProgress || penInProgress.previewEl) return;
-    const line = document.createElementNS(SVG_NS3, "line");
+    const line = document.createElementNS(SVG_NS4, "line");
     line.setAttribute("class", "rubber");
     penInProgress.previewEl = line;
     getTransientLayer().appendChild(line);
@@ -2087,7 +2197,7 @@
   function ensurePenCloseHint() {
     if (!penInProgress) return null;
     if (penInProgress.closeHintEl) return penInProgress.closeHintEl;
-    const c = document.createElementNS(SVG_NS3, "circle");
+    const c = document.createElementNS(SVG_NS4, "circle");
     c.setAttribute("class", "pen-close-hint");
     penInProgress.closeHintEl = c;
     getTransientLayer().appendChild(c);
@@ -4022,22 +4132,23 @@
   function serialize() {
     const doc2 = getDoc();
     const vb2 = tightMode ? computeTightViewBox() : DEFAULT_VIEWBOX;
-    const vbStr = `${round3(vb2.x)} ${round3(vb2.y)} ${round3(vb2.width)} ${round3(vb2.height)}`;
+    const vbStr = `${round4(vb2.x)} ${round4(vb2.y)} ${round4(vb2.width)} ${round4(vb2.height)}`;
     const lines = [
       `<?xml version="1.0" encoding="UTF-8"?>`,
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbStr}">`
     ];
-    lines.push(...arrowDefs(doc2));
+    lines.push(...defsBlock(doc2));
     for (const child of doc2.children) {
       lines.push(...emitNode(child, 1));
     }
     lines.push(`</svg>`);
     return lines.join("\n") + "\n";
   }
-  function arrowDefs(doc2) {
+  function defsBlock(doc2) {
     const needsEnd = doc2.children.some((c) => c.type === "connector" && c.arrowEnd);
     const needsStart = doc2.children.some((c) => c.type === "connector" && c.arrowStart);
-    if (!needsEnd && !needsStart) return [];
+    const gradients = collectGradients(doc2);
+    if (!needsEnd && !needsStart && !gradients.length) return [];
     const out = [`${INDENT}<defs>`];
     const marker = (id) => [
       `${INDENT}${INDENT}<marker id="${id}" markerWidth="12" markerHeight="12" refX="9" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse">`,
@@ -4046,6 +4157,9 @@
     ];
     if (needsEnd) out.push(...marker("arrow-end"));
     if (needsStart) out.push(...marker("arrow-start"));
+    for (const g of gradients) {
+      out.push(...linearGradientMarkup(g.def, g.id, INDENT + INDENT, INDENT));
+    }
     out.push(`${INDENT}</defs>`);
     return out;
   }
@@ -4082,11 +4196,11 @@
       if (!g || !g.valid) return [];
       const orthogonal = Array.isArray(g.points);
       const tag = orthogonal ? "polyline" : "line";
-      const parts = orthogonal ? [`points="${g.points.map(([x, y]) => `${round3(x)},${round3(y)}`).join(" ")}"`, `fill="none"`] : [
-        `x1="${round3(g.x1)}"`,
-        `y1="${round3(g.y1)}"`,
-        `x2="${round3(g.x2)}"`,
-        `y2="${round3(g.y2)}"`
+      const parts = orthogonal ? [`points="${g.points.map(([x, y]) => `${round4(x)},${round4(y)}`).join(" ")}"`, `fill="none"`] : [
+        `x1="${round4(g.x1)}"`,
+        `y1="${round4(g.y1)}"`,
+        `x2="${round4(g.x2)}"`,
+        `y2="${round4(g.y2)}"`
       ];
       for (const k of PRESENTATION_ATTRS) {
         if (!(k in (node.attrs || {}))) continue;
@@ -4103,12 +4217,12 @@
         if (mid) {
           const style = node.labelStyle || {};
           const lp = [
-            `x="${round3(mid.x)}"`,
-            `y="${round3(mid.y)}"`,
+            `x="${round4(mid.x)}"`,
+            `y="${round4(mid.y)}"`,
             `text-anchor="middle"`,
             `dominant-baseline="middle"`,
             `font-family="${escapeXml(String(style["font-family"] || "sans-serif"))}"`,
-            `font-size="${round3(style["font-size"] || 16)}"`,
+            `font-size="${round4(style["font-size"] || 16)}"`,
             `fill="${escapeXml(String(style.fill || "#000000"))}"`,
             `stroke="#ffffff"`,
             `stroke-width="3"`,
@@ -4246,6 +4360,13 @@
       emit2(k, v);
     }
     for (const k of PRESENTATION_ATTRS) {
+      if (k === "fill" || k === "stroke") {
+        const ref = paintRef(node, k);
+        if (ref) {
+          emit2(k, ref);
+          continue;
+        }
+      }
       if (!(k in node.attrs)) continue;
       const v = node.attrs[k];
       if (isDefault(k, v)) continue;
@@ -4267,12 +4388,12 @@
   }
   function formatValue(k, v) {
     if (k === "points" && Array.isArray(v)) {
-      return v.map((p) => `${round3(p[0])},${round3(p[1])}`).join(" ");
+      return v.map((p) => `${round4(p[0])},${round4(p[1])}`).join(" ");
     }
-    if (typeof v === "number") return String(round3(v));
+    if (typeof v === "number") return String(round4(v));
     return escapeXml(String(v));
   }
-  function round3(n) {
+  function round4(n) {
     if (typeof n !== "number") return n;
     if (Math.abs(n) < 1e-9) return 0;
     return Math.round(n * 1e3) / 1e3;
@@ -4283,8 +4404,8 @@
   function transformString(t) {
     if (!t) return "";
     const parts = [];
-    if (t.tx || t.ty) parts.push(`translate(${round3(t.tx)},${round3(t.ty)})`);
-    if (t.rot) parts.push(`rotate(${round3(t.rot)},${round3(t.cx)},${round3(t.cy)})`);
+    if (t.tx || t.ty) parts.push(`translate(${round4(t.tx)},${round4(t.ty)})`);
+    if (t.rot) parts.push(`rotate(${round4(t.rot)},${round4(t.cx)},${round4(t.cy)})`);
     return parts.join(" ");
   }
   var sourcePanel;
