@@ -436,6 +436,27 @@ html, body {
   margin-top: 4px;
 }
 
+/* Full-width action button in the property panel (e.g. Convert to shape). */
+.panel-btn {
+  width: 100%;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 80ms, color 80ms, border-color 80ms;
+}
+.panel-btn:hover { background: #33363c; color: var(--text); }
+.panel-btn:active { background: #40444c; }
+.panel-btn.active {
+  background: rgba(76, 154, 255, 0.18);
+  border-color: rgba(76, 154, 255, 0.5);
+  color: var(--accent-2);
+}
+#props-form .panel-btn[hidden] { display: none; }
+
 /* Align grid */
 .align-grid {
   display: grid;

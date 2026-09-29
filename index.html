@@ -111,6 +111,14 @@
             <option value="fantasy">fantasy</option>
           </select></label>
           <label>Text color <input type="color" id="p-text-color"></label>
+          <div class="props-divider" id="path-divider" hidden>Path</div>
+          <button type="button" id="p-shape-toggle" class="panel-btn" hidden>Convert to shape</button>
+          <label id="path-corner-row" hidden>Corner radius
+            <span class="opacity-group">
+              <input type="range" id="p-corner-radius" min="0" max="100" step="1">
+              <input type="number" id="p-corner-radius-num" min="0" step="1">
+            </span>
+          </label>
           <div class="props-divider" id="connector-divider" hidden>Connector</div>
           <label id="connector-route-row" hidden>Routing <select id="p-connector-route">
             <option value="straight">Straight</option>

@@ -15,6 +15,7 @@ let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth,
 let pText, pFontSize, pFontFamily, pTextColor, pRotation;
 let pConnectorRoute, connectorDivider, connectorRouteRow;
 let pArrowStart, pArrowEnd, connectorArrowStartRow, connectorArrowEndRow;
+let pathDivider, pShapeToggle, pathCornerRow, pCornerRadius, pCornerRadiusNum;
 let clipboard = null;
 let gridApi = null;   // set by mountGrid; used by keyboard shortcuts
 
@@ -129,6 +130,11 @@ function wireProperties(root) {
   pArrowEnd = root.querySelector("#p-arrow-end");
   connectorArrowStartRow = root.querySelector("#connector-arrow-start-row");
   connectorArrowEndRow = root.querySelector("#connector-arrow-end-row");
+  pathDivider = root.querySelector("#path-divider");
+  pShapeToggle = root.querySelector("#p-shape-toggle");
+  pathCornerRow = root.querySelector("#path-corner-row");
+  pCornerRadius = root.querySelector("#p-corner-radius");
+  pCornerRadiusNum = root.querySelector("#p-corner-radius-num");
 
   pFill.addEventListener("input", () => applyToSelection("fill", pFill.value));
   pFill.addEventListener("change", () => historyCommitAfter(() => applyToSelection("fill", pFill.value)));
@@ -179,6 +185,30 @@ function wireProperties(root) {
   // Connector arrowheads.
   pArrowStart.addEventListener("change", () => historyRecord(() => applyConnectorArrow("arrowStart", pArrowStart.checked)));
   pArrowEnd.addEventListener("change", () => historyRecord(() => applyConnectorArrow("arrowEnd", pArrowEnd.checked)));
+
+  // Path: reversible "Convert to shape" ⇄ "Edit points" toggle for a closed path.
+  pShapeToggle.addEventListener("click", () => historyRecord(() => toggleShapeMode()));
+  // Corner radius (rounds a closed path's hard corners). Live-preview on input,
+  // one history entry per edit; the number box and slider stay in sync.
+  pCornerRadius.addEventListener("pointerdown", () => history.beginTransaction());
+  pCornerRadius.addEventListener("input", () => {
+    pCornerRadiusNum.value = pCornerRadius.value;
+    history.ensureTransaction();
+    applyCornerRadius(Number(pCornerRadius.value));
+  });
+  pCornerRadius.addEventListener("change", () => historyCommitAfter(() => applyCornerRadius(Number(pCornerRadius.value))));
+  pCornerRadiusNum.addEventListener("input", () => {
+    const v = Math.max(0, Number(pCornerRadiusNum.value) || 0);
+    history.ensureTransaction();
+    pCornerRadius.value = v;
+    applyCornerRadius(v);
+  });
+  pCornerRadiusNum.addEventListener("change", () => {
+    const v = Math.max(0, Number(pCornerRadiusNum.value) || 0);
+    pCornerRadiusNum.value = v;
+    pCornerRadius.value = v;
+    historyCommitAfter(() => applyCornerRadius(v));
+  });
 
   pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
   pTextColor.addEventListener("change", () => historyCommitAfter(() => applyTextColor(pTextColor.value)));
@@ -291,6 +321,38 @@ function applyConnectorArrow(flag, on) {
   });
 }
 
+// Flip a single selected closed path between shape mode (bbox + resize/rotate
+// handles) and point-edit mode. Non-destructive — anchors are kept either way;
+// only the `shapeMode` flag toggles, which renderSelection reads to pick chrome.
+function toggleShapeMode() {
+  const ids = [...getSelection()];
+  if (ids.length !== 1) return;
+  const id = ids[0];
+  mutate((root) => {
+    const n = findNode(root, id);
+    if (!n || n.type !== "path") return;
+    if (n.shapeMode) delete n.shapeMode;
+    else n.shapeMode = true;
+  });
+}
+
+// Set the live corner radius on every selected closed path. Stored only when > 0
+// (absence = sharp corners), and it's a render/export parameter — anchors are
+// never mutated, so it stays freely adjustable.
+function applyCornerRadius(value) {
+  const r = Math.max(0, Number(value) || 0);
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  mutate((root) => {
+    for (const id of ids) {
+      const n = findNode(root, id);
+      if (!n || n.type !== "path") continue;
+      if (r > 0) n.cornerRadius = r;
+      else delete n.cornerRadius;
+    }
+  });
+}
+
 function applyRotation(deg) {
   const ids = [...getSelection()];
   if (ids.length === 0) return;
@@ -396,6 +458,29 @@ export function refreshPropertyPanel() {
     if (pConnectorRoute) pConnectorRoute.value = connectors[0].route === "orthogonal" ? "orthogonal" : "straight";
     if (pArrowStart) pArrowStart.checked = !!connectors[0].arrowStart;
     if (pArrowEnd) pArrowEnd.checked = !!connectors[0].arrowEnd;
+  }
+
+  // Path row: a lone selected CLOSED pen path can convert to a shape (reversible)
+  // and round its corners. Both features apply to closed paths only.
+  const soleNode = ids.length === 1 ? findNode(doc, ids[0]) : null;
+  const isClosedPath = !!(soleNode && soleNode.type === "path" &&
+    Array.isArray(soleNode.anchors) && soleNode.anchors.length >= 3 && soleNode.closed);
+  if (pathDivider) pathDivider.hidden = !isClosedPath;
+  if (pShapeToggle) {
+    pShapeToggle.hidden = !isClosedPath;
+    if (isClosedPath) {
+      const inShape = !!soleNode.shapeMode;
+      pShapeToggle.textContent = inShape ? "Edit points" : "Convert to shape";
+      pShapeToggle.classList.toggle("active", inShape);
+    }
+  }
+  if (pathCornerRow) pathCornerRow.hidden = !isClosedPath;
+  if (isClosedPath) {
+    const cr = soleNode.cornerRadius || 0;
+    if (document.activeElement !== pCornerRadius && document.activeElement !== pCornerRadiusNum) {
+      pCornerRadius.value = cr;
+      pCornerRadiusNum.value = cr;
+    }
   }
   let sample = null;
   for (const id of ids) {

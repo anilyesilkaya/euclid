@@ -1228,7 +1228,16 @@ function cloneShape(node) {
   return {
     attrs: { ...node.attrs, points: node.attrs.points ? node.attrs.points.map(p => [...p]) : undefined },
     transform: { ...node.transform },
+    // Pen paths resize by scaling their structured anchors — snapshot them too.
+    anchors: Array.isArray(node.anchors) ? node.anchors.map(cloneAnchor) : undefined,
   };
+}
+
+function cloneAnchor(a) {
+  const c = { x: a.x, y: a.y };
+  if (a.cin) c.cin = { x: a.cin.x, y: a.cin.y };
+  if (a.cout) c.cout = { x: a.cout.x, y: a.cout.y };
+  return c;
 }
 
 function updateResize(p, _e) {
@@ -1345,6 +1354,27 @@ function resizeNode(n, orig, dir, dx, dy) {
     const sx = bw ? r.w / bw : 1;
     const sy = bh ? r.h / bh : 1;
     n.attrs.points = pts.map(([x, y]) => [r.x + (x - minX) * sx, r.y + (y - minY) * sy]);
+  } else if (n.type === "path" && Array.isArray(orig.anchors)) {
+    // Pen path in shape mode: scale every anchor AND its bézier handles by the
+    // box ratio, positioned within the anchors' local bbox (control points
+    // included so the box matches the selection outline).
+    const A = orig.anchors;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const acc = (x, y) => { if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y; };
+    for (const a of A) { acc(a.x, a.y); if (a.cin) acc(a.cin.x, a.cin.y); if (a.cout) acc(a.cout.x, a.cout.y); }
+    if (!isFinite(minX)) return;
+    const bw = maxX - minX, bh = maxY - minY;
+    const r = applyBox(minX, minY, bw, bh);
+    const sx = bw ? r.w / bw : 1;
+    const sy = bh ? r.h / bh : 1;
+    const mapPt = (x, y) => ({ x: r.x + (x - minX) * sx, y: r.y + (y - minY) * sy });
+    n.anchors = A.map((a) => {
+      const na = mapPt(a.x, a.y);
+      const out = { x: round2(na.x), y: round2(na.y) };
+      if (a.cin) { const c = mapPt(a.cin.x, a.cin.y); out.cin = { x: round2(c.x), y: round2(c.y) }; }
+      if (a.cout) { const c = mapPt(a.cout.x, a.cout.y); out.cout = { x: round2(c.x), y: round2(c.y) }; }
+      return out;
+    });
   }
   // Groups don't resize here — updateResize scales their subtree geometry directly
   // (see scaleSubtree) so the model stays translate+rotate only (no scale transform).
@@ -1388,6 +1418,14 @@ function scaleGeom(node, sx, sy) {
     a.x1 *= sx; a.y1 *= sy; a.x2 *= sx; a.y2 *= sy;
   } else if (node.type === "polyline" && Array.isArray(a.points)) {
     a.points = a.points.map(([x, y]) => [x * sx, y * sy]);
+  } else if (node.type === "path" && Array.isArray(node.anchors)) {
+    // Scale a pen path's structured anchors (+ handles) about the local origin.
+    node.anchors = node.anchors.map((an) => {
+      const out = { x: an.x * sx, y: an.y * sy };
+      if (an.cin) out.cin = { x: an.cin.x * sx, y: an.cin.y * sy };
+      if (an.cout) out.cout = { x: an.cout.x * sx, y: an.cout.y * sy };
+      return out;
+    });
   } else if (node.type === "text") {
     a.x *= sx; a.y *= sy;
     if (a["font-size"]) a["font-size"] *= avg;
