@@ -3375,6 +3375,10 @@
   var pathCornerRow;
   var pCornerRadius;
   var pCornerRadiusNum;
+  var rectDivider;
+  var rectCornerRow;
+  var pRectRadius;
+  var pRectRadiusNum;
   var pFillType;
   var pStrokeType;
   var fillNoneRow;
@@ -3574,6 +3578,10 @@
     pathCornerRow = root.querySelector("#path-corner-row");
     pCornerRadius = root.querySelector("#p-corner-radius");
     pCornerRadiusNum = root.querySelector("#p-corner-radius-num");
+    rectDivider = root.querySelector("#rect-divider");
+    rectCornerRow = root.querySelector("#rect-corner-row");
+    pRectRadius = root.querySelector("#p-rect-radius");
+    pRectRadiusNum = root.querySelector("#p-rect-radius-num");
     pFillType = root.querySelector("#p-fill-type");
     pStrokeType = root.querySelector("#p-stroke-type");
     fillNoneRow = root.querySelector("#fill-none-row");
@@ -3643,6 +3651,25 @@
       pCornerRadiusNum.value = v;
       pCornerRadius.value = v;
       historyCommitAfter(() => applyCornerRadius(v));
+    });
+    pRectRadius.addEventListener("pointerdown", () => beginTransaction());
+    pRectRadius.addEventListener("input", () => {
+      pRectRadiusNum.value = pRectRadius.value;
+      ensureTransaction();
+      applyRectRadius(Number(pRectRadius.value));
+    });
+    pRectRadius.addEventListener("change", () => historyCommitAfter(() => applyRectRadius(Number(pRectRadius.value))));
+    pRectRadiusNum.addEventListener("input", () => {
+      const v = Math.max(0, Number(pRectRadiusNum.value) || 0);
+      ensureTransaction();
+      pRectRadius.value = v;
+      applyRectRadius(v);
+    });
+    pRectRadiusNum.addEventListener("change", () => {
+      const v = Math.max(0, Number(pRectRadiusNum.value) || 0);
+      pRectRadiusNum.value = v;
+      pRectRadius.value = v;
+      historyCommitAfter(() => applyRectRadius(v));
     });
     pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
     pTextColor.addEventListener("change", () => historyCommitAfter(() => applyTextColor(pTextColor.value)));
@@ -3765,6 +3792,36 @@
         else delete n.cornerRadius;
       }
     });
+  }
+  function applyRectRadius(value) {
+    const r3 = Math.max(0, Number(value) || 0);
+    const ids = [...getSelection()];
+    if (ids.length === 0) return;
+    mutate((root) => {
+      for (const id of ids) {
+        const n = findNode(root, id);
+        if (!n) continue;
+        const rects = n.type === "group" ? collectByType(n, "rect") : n.type === "rect" ? [n] : [];
+        for (const rect of rects) {
+          const cap = Math.min(rect.attrs.width || 0, rect.attrs.height || 0) / 2;
+          const rr = Math.min(r3, cap);
+          if (rr > 0) {
+            rect.attrs.rx = rr;
+            rect.attrs.ry = rr;
+          } else {
+            delete rect.attrs.rx;
+            delete rect.attrs.ry;
+          }
+        }
+      }
+    });
+  }
+  function collectByType(node, type) {
+    const out = [];
+    walk(node, (n) => {
+      if (n.type === type) out.push(n);
+    });
+    return out;
   }
   function applyRotation(deg) {
     const ids = [...getSelection()];
@@ -4087,6 +4144,14 @@
         pCornerRadiusNum.value = cr;
       }
     }
+    const sampleRect = firstOfType(doc2, ids, "rect");
+    if (rectDivider) rectDivider.hidden = !sampleRect;
+    if (rectCornerRow) rectCornerRow.hidden = !sampleRect;
+    if (sampleRect && document.activeElement !== pRectRadius && document.activeElement !== pRectRadiusNum) {
+      const rr = sampleRect.attrs.rx || 0;
+      pRectRadius.value = rr;
+      pRectRadiusNum.value = rr;
+    }
     let sample = null;
     for (const id of ids) {
       const n = findNode(doc2, id);
@@ -4139,6 +4204,15 @@
     for (const c of node.children) {
       const s = firstShape(c);
       if (s) return s;
+    }
+    return null;
+  }
+  function firstOfType(doc2, ids, type) {
+    for (const id of ids) {
+      const n = findNode(doc2, id);
+      if (!n) continue;
+      const hits = collectByType(n, type);
+      if (hits.length) return hits[0];
     }
     return null;
   }
