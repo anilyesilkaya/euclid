@@ -35,6 +35,9 @@ const DEFAULTS = {
   "stroke-opacity": 1,
   rx: 0,
   ry: 0,
+  "stroke-linecap": "butt",
+  "stroke-linejoin": "miter",
+  "stroke-dasharray": "none",
 };
 
 export function serialize() {

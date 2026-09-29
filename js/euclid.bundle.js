@@ -3379,6 +3379,18 @@
   var rectCornerRow;
   var pRectRadius;
   var pRectRadiusNum;
+  var pStrokeDash;
+  var pStrokeCap;
+  var pStrokeJoin;
+  var strokeDashRow;
+  var strokeCapRow;
+  var strokeJoinRow;
+  var DASH_PRESETS = { none: "none", dashed: "6 4", dotted: "1 3" };
+  function dashPresetOf(v) {
+    if (!v || v === "none") return "none";
+    if (v === DASH_PRESETS.dotted) return "dotted";
+    return "dashed";
+  }
   var pFillType;
   var pStrokeType;
   var fillNoneRow;
@@ -3582,6 +3594,12 @@
     rectCornerRow = root.querySelector("#rect-corner-row");
     pRectRadius = root.querySelector("#p-rect-radius");
     pRectRadiusNum = root.querySelector("#p-rect-radius-num");
+    pStrokeDash = root.querySelector("#p-stroke-dash");
+    pStrokeCap = root.querySelector("#p-stroke-cap");
+    pStrokeJoin = root.querySelector("#p-stroke-join");
+    strokeDashRow = root.querySelector("#stroke-dash-row");
+    strokeCapRow = root.querySelector("#stroke-cap-row");
+    strokeJoinRow = root.querySelector("#stroke-join-row");
     pFillType = root.querySelector("#p-fill-type");
     pStrokeType = root.querySelector("#p-stroke-type");
     fillNoneRow = root.querySelector("#fill-none-row");
@@ -3595,6 +3613,9 @@
     pStrokeNone.addEventListener("change", () => historyRecord(() => applyToSelection("stroke", pStrokeNone.checked ? "none" : pStroke.value)));
     pStrokeWidth.addEventListener("input", () => applyToSelection("stroke-width", Number(pStrokeWidth.value)));
     pStrokeWidth.addEventListener("change", () => historyCommitAfter(() => applyToSelection("stroke-width", Number(pStrokeWidth.value))));
+    pStrokeDash.addEventListener("change", () => historyRecord(() => applyToSelection("stroke-dasharray", DASH_PRESETS[pStrokeDash.value] || "none")));
+    pStrokeCap.addEventListener("change", () => historyRecord(() => applyToSelection("stroke-linecap", pStrokeCap.value)));
+    pStrokeJoin.addEventListener("change", () => historyRecord(() => applyToSelection("stroke-linejoin", pStrokeJoin.value)));
     pOpacity.addEventListener("input", () => {
       pOpacityNum.value = pOpacity.value;
       applyToSelection("opacity", Number(pOpacity.value));
@@ -4179,6 +4200,15 @@
     pStrokeWidth.value = sw;
     pOpacity.value = op;
     pOpacityNum.value = round23(op);
+    const hasStroke = stroke !== "none";
+    if (strokeDashRow) strokeDashRow.hidden = !hasStroke;
+    if (strokeCapRow) strokeCapRow.hidden = !hasStroke;
+    if (strokeJoinRow) strokeJoinRow.hidden = !hasStroke;
+    if (hasStroke) {
+      pStrokeDash.value = dashPresetOf(sample.attrs["stroke-dasharray"]);
+      pStrokeCap.value = sample.attrs["stroke-linecap"] || "butt";
+      pStrokeJoin.value = sample.attrs["stroke-linejoin"] || "miter";
+    }
     const firstSel = findNode(doc2, ids[0]);
     const rot = firstSel?.transform?.rot || 0;
     if (document.activeElement !== pRotation) pRotation.value = normalizeAngle(rot) ?? 0;
@@ -4565,7 +4595,10 @@
     "fill-opacity": 1,
     "stroke-opacity": 1,
     rx: 0,
-    ry: 0
+    ry: 0,
+    "stroke-linecap": "butt",
+    "stroke-linejoin": "miter",
+    "stroke-dasharray": "none"
   };
   function serialize() {
     const doc2 = getDoc();

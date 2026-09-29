@@ -42,6 +42,15 @@ let pConnectorRoute, connectorDivider, connectorRouteRow;
 let pArrowStart, pArrowEnd, connectorArrowStartRow, connectorArrowEndRow;
 let pathDivider, pShapeToggle, pathCornerRow, pCornerRadius, pCornerRadiusNum;
 let rectDivider, rectCornerRow, pRectRadius, pRectRadiusNum;
+let pStrokeDash, pStrokeCap, pStrokeJoin, strokeDashRow, strokeCapRow, strokeJoinRow;
+
+// Dash presets ↔ SVG stroke-dasharray. "none" is solid (attr suppressed on export).
+const DASH_PRESETS = { none: "none", dashed: "6 4", dotted: "1 3" };
+function dashPresetOf(v) {
+  if (!v || v === "none") return "none";
+  if (v === DASH_PRESETS.dotted) return "dotted";
+  return "dashed"; // any other pattern reads as a generic dash
+}
 let pFillType, pStrokeType, fillNoneRow, strokeNoneRow;
 let gradEditors = {}; // slot -> { root, preview, angle, angleNum, stops, add }
 let clipboard = null;
@@ -262,6 +271,12 @@ function wireProperties(root) {
   rectCornerRow = root.querySelector("#rect-corner-row");
   pRectRadius = root.querySelector("#p-rect-radius");
   pRectRadiusNum = root.querySelector("#p-rect-radius-num");
+  pStrokeDash = root.querySelector("#p-stroke-dash");
+  pStrokeCap = root.querySelector("#p-stroke-cap");
+  pStrokeJoin = root.querySelector("#p-stroke-join");
+  strokeDashRow = root.querySelector("#stroke-dash-row");
+  strokeCapRow = root.querySelector("#stroke-cap-row");
+  strokeJoinRow = root.querySelector("#stroke-join-row");
   pFillType = root.querySelector("#p-fill-type");
   pStrokeType = root.querySelector("#p-stroke-type");
   fillNoneRow = root.querySelector("#fill-none-row");
@@ -276,6 +291,11 @@ function wireProperties(root) {
   pStrokeNone.addEventListener("change", () => historyRecord(() => applyToSelection("stroke", pStrokeNone.checked ? "none" : pStroke.value)));
   pStrokeWidth.addEventListener("input", () => applyToSelection("stroke-width", Number(pStrokeWidth.value)));
   pStrokeWidth.addEventListener("change", () => historyCommitAfter(() => applyToSelection("stroke-width", Number(pStrokeWidth.value))));
+
+  // Stroke style: dash pattern, line cap, line join. Each is one history entry.
+  pStrokeDash.addEventListener("change", () => historyRecord(() => applyToSelection("stroke-dasharray", DASH_PRESETS[pStrokeDash.value] || "none")));
+  pStrokeCap.addEventListener("change", () => historyRecord(() => applyToSelection("stroke-linecap", pStrokeCap.value)));
+  pStrokeJoin.addEventListener("change", () => historyRecord(() => applyToSelection("stroke-linejoin", pStrokeJoin.value)));
   pOpacity.addEventListener("input", () => {
     pOpacityNum.value = pOpacity.value;
     applyToSelection("opacity", Number(pOpacity.value));
@@ -932,6 +952,18 @@ export function refreshPropertyPanel() {
   pStrokeWidth.value = sw;
   pOpacity.value = op;
   pOpacityNum.value = round2(op);
+
+  // Stroke style — reflect the sample's dash preset, cap, and join. These rows
+  // are meaningless when the stroke is off, so hide them for a strokeless sample.
+  const hasStroke = stroke !== "none";
+  if (strokeDashRow) strokeDashRow.hidden = !hasStroke;
+  if (strokeCapRow) strokeCapRow.hidden = !hasStroke;
+  if (strokeJoinRow) strokeJoinRow.hidden = !hasStroke;
+  if (hasStroke) {
+    pStrokeDash.value = dashPresetOf(sample.attrs["stroke-dasharray"]);
+    pStrokeCap.value = sample.attrs["stroke-linecap"] || "butt";
+    pStrokeJoin.value = sample.attrs["stroke-linejoin"] || "miter";
+  }
 
   // Rotation — read from the first selected node's transform. Don't clobber the
   // field while the user is typing in it (refresh fires on every live-preview mutate).

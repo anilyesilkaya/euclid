@@ -128,6 +128,21 @@
             <button type="button" class="panel-btn grad-add">+ Add stop</button>
           </div>
           <label>Stroke width <input type="number" id="p-stroke-width" min="0" step="0.5"></label>
+          <label id="stroke-dash-row">Dash <select id="p-stroke-dash">
+            <option value="none">Solid</option>
+            <option value="dashed">Dashed</option>
+            <option value="dotted">Dotted</option>
+          </select></label>
+          <label id="stroke-cap-row">Line cap <select id="p-stroke-cap">
+            <option value="butt">Butt</option>
+            <option value="round">Round</option>
+            <option value="square">Square</option>
+          </select></label>
+          <label id="stroke-join-row">Line join <select id="p-stroke-join">
+            <option value="miter">Miter</option>
+            <option value="round">Round</option>
+            <option value="bevel">Bevel</option>
+          </select></label>
           <label>Opacity
             <span class="opacity-group">
               <input type="range" id="p-opacity" min="0" max="1" step="0.01">
