@@ -12,6 +12,30 @@ import { getGradient, isValidGradient, defaultLinearGradient } from "./paint.js"
 
 const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", n: "pen", t: "text", x: "connector" };
 
+// Illustrator-style tool flyouts: a slot button hides related variants revealed
+// on right-click or press-and-hold. The variants share the slot; picking one
+// makes it the slot's active tool (and its icon shows on the slot button).
+const FLYOUT_HOLD_MS = 250;
+const TOOL_ICONS = {
+  rect: '<rect x="4" y="6" width="16" height="12" fill="none" stroke="currentColor" stroke-width="2"/>',
+  roundrect: '<rect x="4" y="6" width="16" height="12" rx="4" ry="4" fill="none" stroke="currentColor" stroke-width="2"/>',
+  ellipse: '<ellipse cx="12" cy="12" rx="9" ry="6" fill="none" stroke="currentColor" stroke-width="2"/>',
+  circle: '<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/>',
+};
+const TOOL_FLYOUTS = {
+  rect: [
+    { tool: "rect", title: "Rectangle (R)" },
+    { tool: "roundrect", title: "Rounded rectangle" },
+  ],
+  ellipse: [
+    { tool: "ellipse", title: "Ellipse (E) — hold Shift for a circle" },
+    { tool: "circle", title: "Circle (C) — hold Shift for a perfect circle" },
+  ],
+};
+// The tool currently shown on each slot button (defaults to the slot's first variant).
+const slotActiveTool = { rect: "rect", ellipse: "ellipse" };
+let openFlyout = null; // { slot, el } while a flyout is visible
+
 let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity, pOpacityNum;
 let pText, pFontSize, pFontFamily, pTextColor, pRotation;
 let pConnectorRoute, connectorDivider, connectorRouteRow;
@@ -101,14 +125,109 @@ export function mountGrid(grid) {
 function wireToolbar(root) {
   const btns = root.querySelectorAll("#toolbar .tool");
   for (const b of btns) {
-    b.addEventListener("click", () => setTool(b.dataset.tool));
+    const slot = b.dataset.slot;
+    let openedByHold = false; // set when a hold opened the flyout; swallows the trailing click
+    b.addEventListener("click", () => {
+      if (openedByHold) { openedByHold = false; return; }
+      // A click picks the slot's active tool (or a plain tool for non-slot buttons).
+      setTool(slot ? slotActiveTool[slot] : b.dataset.tool);
+    });
+    if (!slot) continue;
+
+    // Right-click opens the flyout (suppress the browser context menu).
+    b.addEventListener("contextmenu", (e) => { e.preventDefault(); showFlyout(slot, b); });
+
+    // Press-and-hold also opens it, Illustrator-style. A quick tap falls through
+    // to the click handler above; the hold timer opens the flyout mid-press.
+    let holdTimer = null;
+    const clearHold = () => { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } };
+    b.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      clearHold();
+      holdTimer = setTimeout(() => { holdTimer = null; openedByHold = true; showFlyout(slot, b); }, FLYOUT_HOLD_MS);
+    });
+    b.addEventListener("pointerup", clearHold);
+    b.addEventListener("pointerleave", clearHold);
   }
+
+  // Dismiss an open flyout on any outside interaction.
+  document.addEventListener("pointerdown", (e) => {
+    if (openFlyout && !openFlyout.el.contains(e.target) &&
+        !(e.target.closest && e.target.closest(`.tool[data-slot="${openFlyout.slot}"]`))) {
+      closeFlyout();
+    }
+  }, true);
+  window.addEventListener("blur", closeFlyout);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeFlyout(); });
+}
+
+// Build (or reuse) and position the variant flyout next to its slot button.
+function showFlyout(slot, slotBtn) {
+  const variants = TOOL_FLYOUTS[slot];
+  if (!variants) return;
+  closeFlyout();
+  const fly = document.createElement("div");
+  fly.className = "tool-flyout";
+  for (const v of variants) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "tool";
+    b.dataset.tool = v.tool;
+    b.title = v.title;
+    b.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20">${TOOL_ICONS[v.tool] || ""}</svg>`;
+    b.classList.toggle("active", getTool() === v.tool);
+    b.addEventListener("click", () => {
+      slotActiveTool[slot] = v.tool;
+      updateSlotIcon(slot, slotBtn);
+      setTool(v.tool);
+      closeFlyout();
+    });
+    fly.appendChild(b);
+  }
+  document.body.appendChild(fly);
+  const r = slotBtn.getBoundingClientRect();
+  fly.style.left = `${Math.round(r.right + 6)}px`;
+  fly.style.top = `${Math.round(r.top)}px`;
+  openFlyout = { slot, el: fly };
+}
+
+function closeFlyout() {
+  if (openFlyout) { openFlyout.el.remove(); openFlyout = null; }
+}
+
+// Swap the slot button's icon + tooltip to reflect its active variant.
+function updateSlotIcon(slot, slotBtn) {
+  const tool = slotActiveTool[slot];
+  const svg = slotBtn.querySelector("svg");
+  if (svg && TOOL_ICONS[tool]) svg.innerHTML = TOOL_ICONS[tool];
+  const variant = (TOOL_FLYOUTS[slot] || []).find(v => v.tool === tool);
+  if (variant) slotBtn.title = variant.title;
+  slotBtn.dataset.tool = tool;
 }
 
 function reflectToolInUI(tool) {
+  // A slot button is active when the current tool is any of its variants; keep
+  // the slot's remembered active tool in sync so its icon matches.
   document.querySelectorAll("#toolbar .tool").forEach(b => {
-    b.classList.toggle("active", b.dataset.tool === tool);
+    const slot = b.dataset.slot;
+    if (slot) {
+      const variants = (TOOL_FLYOUTS[slot] || []).map(v => v.tool);
+      const owns = variants.includes(tool);
+      if (owns && slotActiveTool[slot] !== tool) {
+        slotActiveTool[slot] = tool;
+        updateSlotIcon(slot, b);
+      }
+      b.classList.toggle("active", owns);
+    } else {
+      b.classList.toggle("active", b.dataset.tool === tool);
+    }
   });
+  // Keep any open flyout's highlight current.
+  if (openFlyout) {
+    openFlyout.el.querySelectorAll(".tool").forEach(b => {
+      b.classList.toggle("active", b.dataset.tool === tool);
+    });
+  }
 }
 
 function wireProperties(root) {

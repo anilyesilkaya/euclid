@@ -59,6 +59,45 @@ html, body {
   border-color: rgba(76, 154, 255, 0.5);
 }
 
+/* Flyout affordance: a small corner triangle marks a tool button that hides
+   variants (Illustrator-style). */
+.tool[data-slot] { position: relative; }
+.tool[data-slot]::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 0 5px 5px;
+  border-color: transparent transparent currentColor transparent;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.tool[data-slot]:hover::after { opacity: 0.85; }
+
+/* Tool variant flyout: a horizontal strip of variant buttons, positioned in JS
+   next to the slot it belongs to. */
+.tool-flyout {
+  position: fixed;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  z-index: 50;
+}
+.tool-flyout[hidden] { display: none; }
+.tool-flyout .tool { border-color: transparent; }
+.tool-flyout .tool.active {
+  color: var(--text);
+  background: rgba(76, 154, 255, 0.15);
+  border-color: rgba(76, 154, 255, 0.5);
+}
+
 /* Canvas */
 #canvas-wrap {
   position: relative;

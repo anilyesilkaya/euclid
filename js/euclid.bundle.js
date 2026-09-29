@@ -1397,6 +1397,7 @@
   var CANVAS_BBOX = { x: 0, y: 0, width: 1e3, height: 700 };
   var SNAP_THRESHOLD = 6;
   var DRAG_THRESHOLD = 3;
+  var ROUND_RECT_RADIUS = 16;
   var hoveredId = null;
   var SVG_NS4 = "http://www.w3.org/2000/svg";
   var DEFAULT_STYLE = {
@@ -1846,8 +1847,12 @@
     gesture = { type: "draw", origin: p, last: p, moved: false, id, tool: currentTool };
   }
   function seedNodeFor(tool, id, p) {
-    const base = { id, type: tool, transform: emptyTransform() };
+    const type = tool === "roundrect" ? "rect" : tool;
+    const base = { id, type, transform: emptyTransform() };
     const style = tool === "line" ? { ...LINE_STYLE } : { ...DEFAULT_STYLE };
+    if (tool === "roundrect") {
+      return { ...base, attrs: { x: p.x, y: p.y, width: 0, height: 0, rx: ROUND_RECT_RADIUS, ry: ROUND_RECT_RADIUS, ...style } };
+    }
     if (tool === "rect") {
       return { ...base, attrs: { x: p.x, y: p.y, width: 0, height: 0, rx: 0, ry: 0, ...style } };
     }
@@ -1867,7 +1872,7 @@
     if (isSnap() && !e.altKey) p = snapPoint(p.x, p.y);
     let dx = p.x - origin.x;
     let dy = p.y - origin.y;
-    if (e.shiftKey && (tool === "rect" || tool === "ellipse" || tool === "circle")) {
+    if (e.shiftKey && (tool === "rect" || tool === "roundrect" || tool === "ellipse" || tool === "circle")) {
       const s = Math.max(Math.abs(dx), Math.abs(dy));
       dx = Math.sign(dx || 1) * s;
       dy = Math.sign(dy || 1) * s;
@@ -1875,7 +1880,7 @@
     mutate((root) => {
       const n = findNode(root, id);
       if (!n) return;
-      if (tool === "rect") {
+      if (tool === "rect" || tool === "roundrect") {
         n.attrs.x = Math.min(origin.x, origin.x + dx);
         n.attrs.y = Math.min(origin.y, origin.y + dy);
         n.attrs.width = Math.abs(dx);
@@ -1925,7 +1930,7 @@
     setSelection([id]);
   }
   function isEmptyShape(node, tool) {
-    if (tool === "rect") return !(node.attrs.width > 0 && node.attrs.height > 0);
+    if (tool === "rect" || tool === "roundrect") return !(node.attrs.width > 0 && node.attrs.height > 0);
     if (tool === "ellipse") return !(node.attrs.rx > 0 && node.attrs.ry > 0);
     if (tool === "circle") return !(node.attrs.r > 0);
     if (tool === "line") return node.attrs.x1 === node.attrs.x2 && node.attrs.y1 === node.attrs.y2;
@@ -3325,6 +3330,25 @@
 
   // js/ui.js
   var TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", n: "pen", t: "text", x: "connector" };
+  var FLYOUT_HOLD_MS = 250;
+  var TOOL_ICONS = {
+    rect: '<rect x="4" y="6" width="16" height="12" fill="none" stroke="currentColor" stroke-width="2"/>',
+    roundrect: '<rect x="4" y="6" width="16" height="12" rx="4" ry="4" fill="none" stroke="currentColor" stroke-width="2"/>',
+    ellipse: '<ellipse cx="12" cy="12" rx="9" ry="6" fill="none" stroke="currentColor" stroke-width="2"/>',
+    circle: '<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/>'
+  };
+  var TOOL_FLYOUTS = {
+    rect: [
+      { tool: "rect", title: "Rectangle (R)" },
+      { tool: "roundrect", title: "Rounded rectangle" }
+    ],
+    ellipse: [
+      { tool: "ellipse", title: "Ellipse (E) \u2014 hold Shift for a circle" },
+      { tool: "circle", title: "Circle (C) \u2014 hold Shift for a perfect circle" }
+    ]
+  };
+  var slotActiveTool = { rect: "rect", ellipse: "ellipse" };
+  var openFlyout = null;
   var propsEmpty;
   var propsForm;
   var pFill;
@@ -3417,13 +3441,111 @@
   function wireToolbar(root) {
     const btns = root.querySelectorAll("#toolbar .tool");
     for (const b of btns) {
-      b.addEventListener("click", () => setTool(b.dataset.tool));
+      const slot = b.dataset.slot;
+      let openedByHold = false;
+      b.addEventListener("click", () => {
+        if (openedByHold) {
+          openedByHold = false;
+          return;
+        }
+        setTool(slot ? slotActiveTool[slot] : b.dataset.tool);
+      });
+      if (!slot) continue;
+      b.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        showFlyout(slot, b);
+      });
+      let holdTimer = null;
+      const clearHold = () => {
+        if (holdTimer) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+        }
+      };
+      b.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        clearHold();
+        holdTimer = setTimeout(() => {
+          holdTimer = null;
+          openedByHold = true;
+          showFlyout(slot, b);
+        }, FLYOUT_HOLD_MS);
+      });
+      b.addEventListener("pointerup", clearHold);
+      b.addEventListener("pointerleave", clearHold);
     }
+    document.addEventListener("pointerdown", (e) => {
+      if (openFlyout && !openFlyout.el.contains(e.target) && !(e.target.closest && e.target.closest(`.tool[data-slot="${openFlyout.slot}"]`))) {
+        closeFlyout();
+      }
+    }, true);
+    window.addEventListener("blur", closeFlyout);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeFlyout();
+    });
+  }
+  function showFlyout(slot, slotBtn) {
+    const variants = TOOL_FLYOUTS[slot];
+    if (!variants) return;
+    closeFlyout();
+    const fly = document.createElement("div");
+    fly.className = "tool-flyout";
+    for (const v of variants) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tool";
+      b.dataset.tool = v.tool;
+      b.title = v.title;
+      b.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20">${TOOL_ICONS[v.tool] || ""}</svg>`;
+      b.classList.toggle("active", getTool() === v.tool);
+      b.addEventListener("click", () => {
+        slotActiveTool[slot] = v.tool;
+        updateSlotIcon(slot, slotBtn);
+        setTool(v.tool);
+        closeFlyout();
+      });
+      fly.appendChild(b);
+    }
+    document.body.appendChild(fly);
+    const r3 = slotBtn.getBoundingClientRect();
+    fly.style.left = `${Math.round(r3.right + 6)}px`;
+    fly.style.top = `${Math.round(r3.top)}px`;
+    openFlyout = { slot, el: fly };
+  }
+  function closeFlyout() {
+    if (openFlyout) {
+      openFlyout.el.remove();
+      openFlyout = null;
+    }
+  }
+  function updateSlotIcon(slot, slotBtn) {
+    const tool = slotActiveTool[slot];
+    const svg3 = slotBtn.querySelector("svg");
+    if (svg3 && TOOL_ICONS[tool]) svg3.innerHTML = TOOL_ICONS[tool];
+    const variant = (TOOL_FLYOUTS[slot] || []).find((v) => v.tool === tool);
+    if (variant) slotBtn.title = variant.title;
+    slotBtn.dataset.tool = tool;
   }
   function reflectToolInUI(tool) {
     document.querySelectorAll("#toolbar .tool").forEach((b) => {
-      b.classList.toggle("active", b.dataset.tool === tool);
+      const slot = b.dataset.slot;
+      if (slot) {
+        const variants = (TOOL_FLYOUTS[slot] || []).map((v) => v.tool);
+        const owns = variants.includes(tool);
+        if (owns && slotActiveTool[slot] !== tool) {
+          slotActiveTool[slot] = tool;
+          updateSlotIcon(slot, b);
+        }
+        b.classList.toggle("active", owns);
+      } else {
+        b.classList.toggle("active", b.dataset.tool === tool);
+      }
     });
+    if (openFlyout) {
+      openFlyout.el.querySelectorAll(".tool").forEach((b) => {
+        b.classList.toggle("active", b.dataset.tool === tool);
+      });
+    }
   }
   function wireProperties(root) {
     propsEmpty = root.querySelector("#props-empty");
