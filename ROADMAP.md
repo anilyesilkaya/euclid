@@ -105,8 +105,24 @@ save/open format with debounced autosave.
     parameter fed to `anchorsToPath`, which fillets each roundable corner (a
     handle-less vertex bordered by two straight segments) with a quadratic,
     clamped to half of each adjacent edge. Anchors are never mutated by either.
-- **M7 — Gradients.** A paint-server model (currently rejected on import by
-  design in `import.js`), fill / stroke gradient UI, and export / import support.
+- **M7 — Gradients.** ✅ **Done (linear).** A paint-server model where each node
+  owns its gradient paint inline — `node.gradients = { fill?, stroke? }`, each a
+  `{ type: "linear", angle, stops: [{offset, color, opacity}] }` (in `js/paint.js`).
+  The `<linearGradient>` element and its `url(#id)` reference are *derived* at
+  render/export from a deterministic per-node id (mirroring the pen-path
+  "derive, don't store" approach), so duplicate/paste and copy/paste need no
+  special handling and there's no shared def registry to keep in sync.
+  `render.js` injects a live `<defs>` into `#doc-layer`; `export.js` deep-walks
+  the tree and emits the gradients into the shared `<defs>` block. The property
+  panel gains a **Solid / Linear** paint-type dropdown per slot (Fill / Stroke);
+  choosing Linear reveals a gradient editor — live preview, angle slider+number,
+  per-stop rows (color + offset + delete, minimum two stops) and an add-stop
+  button that inserts an interpolated stop in the largest gap. Import parses
+  `<linearGradient>` defs (folding `x1/y1/x2/y2` + `gradientTransform` rotate
+  into the single angle, preserving `stop-opacity`, `%` offsets, and `href` stop
+  inheritance) and resolves `url(#…)` fills/strokes back into the model; radial
+  gradients, patterns, and unknown paint refs are still rejected with a specific
+  message. **Radial gradients** are the documented fast-follow.
 - **M10 — Illustrator-style rotate + copy and "Transform Again."** Make the
   transform-with-duplicate and repeat behaviors match Adobe Illustrator:
   - **Alt/Option-drag during a transform duplicates.** Today Euclid only
