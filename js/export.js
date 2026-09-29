@@ -266,7 +266,7 @@ function buildAttrs(node) {
   // Pen-drawn paths derive `d` from the structured anchor model — the stored
   // attrs.d (if any) is stale, so emit the freshly computed geometry instead.
   const derivedD = node.type === "path" && Array.isArray(node.anchors)
-    ? anchorsToPath(node.anchors, node.closed)
+    ? anchorsToPath(node.anchors, node.closed, node.cornerRadius || 0)
     : null;
 
   // 1) Geometry

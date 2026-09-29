@@ -898,17 +898,13 @@ function handlePenDown(e, p) {
   }
 
   // Click near the first anchor closes the path (needs at least a triangle).
-  const node = findNode(getDoc(), penInProgress.id);
-  if (node && Array.isArray(node.anchors) && node.anchors.length >= 2) {
-    const first = node.anchors[0];
-    if (Math.hypot(p.x - first.x, p.y - first.y) <= PEN_CLOSE_PX * canvasPixelScale()) {
-      mutate((root) => {
-        const n = findNode(root, penInProgress.id);
-        if (n) n.closed = true;
-      });
-      commitPen();
-      return;
-    }
+  if (penCloseAnchor(p)) {
+    mutate((root) => {
+      const n = findNode(root, penInProgress.id);
+      if (n) n.closed = true;
+    });
+    commitPen();
+    return;
   }
 
   // Otherwise append a new anchor and arm a gesture for a drag-to-curve.
@@ -942,12 +938,36 @@ function updatePenDrag(p, e) {
 // simply continues. The rubber-band preview resumes on the next pointermove.
 function finishPenAnchor(g, e) { /* nothing to commit per-anchor */ }
 
+// Would a click at canvas point `p` close the in-progress path? Returns the first
+// anchor when yes (within PEN_CLOSE_PX and the path has ≥2 anchors), else null.
+// Shared by the click handler and the hover cue so they agree exactly.
+function penCloseAnchor(p) {
+  if (!penInProgress) return null;
+  const node = findNode(getDoc(), penInProgress.id);
+  if (!node || !Array.isArray(node.anchors) || node.anchors.length < 2) return null;
+  const first = node.anchors[0];
+  if (Math.hypot(p.x - first.x, p.y - first.y) <= PEN_CLOSE_PX * canvasPixelScale()) return first;
+  return null;
+}
+
 function ensurePenPreview() {
   if (!penInProgress || penInProgress.previewEl) return;
   const line = document.createElementNS(SVG_NS, "line");
   line.setAttribute("class", "rubber");
   penInProgress.previewEl = line;
   getTransientLayer().appendChild(line);
+}
+
+// A ring drawn over the first anchor while the pointer is close enough to close
+// the path — the Illustrator "○" pen-close cue. Created lazily; hidden otherwise.
+function ensurePenCloseHint() {
+  if (!penInProgress) return null;
+  if (penInProgress.closeHintEl) return penInProgress.closeHintEl;
+  const c = document.createElementNS(SVG_NS, "circle");
+  c.setAttribute("class", "pen-close-hint");
+  penInProgress.closeHintEl = c;
+  getTransientLayer().appendChild(c);
+  return c;
 }
 
 function updatePenPreview(p) {
@@ -957,10 +977,28 @@ function updatePenPreview(p) {
   const last = node.anchors[node.anchors.length - 1];
   const line = penInProgress.previewEl;
   if (!line) return;
+
+  // If hovering within the close threshold, snap the rubber-band to the first
+  // anchor and show the close ring over it; otherwise track the pointer.
+  const closeTo = penCloseAnchor(p);
+  const end = closeTo || p;
   line.setAttribute("x1", last.x);
   line.setAttribute("y1", last.y);
-  line.setAttribute("x2", p.x);
-  line.setAttribute("y2", p.y);
+  line.setAttribute("x2", end.x);
+  line.setAttribute("y2", end.y);
+
+  const hint = ensurePenCloseHint();
+  if (hint) {
+    if (closeTo) {
+      const r = PEN_CLOSE_PX * canvasPixelScale();
+      hint.setAttribute("cx", closeTo.x);
+      hint.setAttribute("cy", closeTo.y);
+      hint.setAttribute("r", r);
+      hint.removeAttribute("hidden");
+    } else {
+      hint.setAttribute("hidden", "");
+    }
+  }
 }
 
 // Finalize the in-progress pen path: drop a trailing anchor coincident with its
@@ -1190,7 +1228,16 @@ function cloneShape(node) {
   return {
     attrs: { ...node.attrs, points: node.attrs.points ? node.attrs.points.map(p => [...p]) : undefined },
     transform: { ...node.transform },
+    // Pen paths resize by scaling their structured anchors — snapshot them too.
+    anchors: Array.isArray(node.anchors) ? node.anchors.map(cloneAnchor) : undefined,
   };
+}
+
+function cloneAnchor(a) {
+  const c = { x: a.x, y: a.y };
+  if (a.cin) c.cin = { x: a.cin.x, y: a.cin.y };
+  if (a.cout) c.cout = { x: a.cout.x, y: a.cout.y };
+  return c;
 }
 
 function updateResize(p, _e) {
@@ -1307,6 +1354,27 @@ function resizeNode(n, orig, dir, dx, dy) {
     const sx = bw ? r.w / bw : 1;
     const sy = bh ? r.h / bh : 1;
     n.attrs.points = pts.map(([x, y]) => [r.x + (x - minX) * sx, r.y + (y - minY) * sy]);
+  } else if (n.type === "path" && Array.isArray(orig.anchors)) {
+    // Pen path in shape mode: scale every anchor AND its bézier handles by the
+    // box ratio, positioned within the anchors' local bbox (control points
+    // included so the box matches the selection outline).
+    const A = orig.anchors;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const acc = (x, y) => { if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y; };
+    for (const a of A) { acc(a.x, a.y); if (a.cin) acc(a.cin.x, a.cin.y); if (a.cout) acc(a.cout.x, a.cout.y); }
+    if (!isFinite(minX)) return;
+    const bw = maxX - minX, bh = maxY - minY;
+    const r = applyBox(minX, minY, bw, bh);
+    const sx = bw ? r.w / bw : 1;
+    const sy = bh ? r.h / bh : 1;
+    const mapPt = (x, y) => ({ x: r.x + (x - minX) * sx, y: r.y + (y - minY) * sy });
+    n.anchors = A.map((a) => {
+      const na = mapPt(a.x, a.y);
+      const out = { x: round2(na.x), y: round2(na.y) };
+      if (a.cin) { const c = mapPt(a.cin.x, a.cin.y); out.cin = { x: round2(c.x), y: round2(c.y) }; }
+      if (a.cout) { const c = mapPt(a.cout.x, a.cout.y); out.cout = { x: round2(c.x), y: round2(c.y) }; }
+      return out;
+    });
   }
   // Groups don't resize here — updateResize scales their subtree geometry directly
   // (see scaleSubtree) so the model stays translate+rotate only (no scale transform).
@@ -1350,6 +1418,14 @@ function scaleGeom(node, sx, sy) {
     a.x1 *= sx; a.y1 *= sy; a.x2 *= sx; a.y2 *= sy;
   } else if (node.type === "polyline" && Array.isArray(a.points)) {
     a.points = a.points.map(([x, y]) => [x * sx, y * sy]);
+  } else if (node.type === "path" && Array.isArray(node.anchors)) {
+    // Scale a pen path's structured anchors (+ handles) about the local origin.
+    node.anchors = node.anchors.map((an) => {
+      const out = { x: an.x * sx, y: an.y * sy };
+      if (an.cin) out.cin = { x: an.cin.x * sx, y: an.cin.y * sy };
+      if (an.cout) out.cout = { x: an.cout.x * sx, y: an.cout.y * sy };
+      return out;
+    });
   } else if (node.type === "text") {
     a.x *= sx; a.y *= sy;
     if (a["font-size"]) a["font-size"] *= avg;
@@ -1521,6 +1597,7 @@ function handleTextDown(e, p) {
 let editorEl = null;
 let editorTargetId = null;
 let editorMode = null; // "text-node" | "label"
+let editorHiddenEl = null; // rendered <text> hidden while its inline editor is open
 
 export function openTextEditor(node) {
   editorTargetId = node.id;
@@ -1548,6 +1625,10 @@ function showEditor(initial, positionFn) {
   document.body.appendChild(el);
   editorEl = el;
   Object.assign(el.style, positionFn());
+
+  // Hide the rendered glyphs underneath so the live edit isn't drawn over the
+  // stale rendered text (otherwise the two overlap until the next re-render).
+  hideEditorTarget();
 
   el.addEventListener("keydown", (evt) => {
     if (evt.key === "Enter" && !evt.shiftKey) {
@@ -1683,10 +1764,38 @@ function cancelTextEditor() {
   }
 }
 
+// Hide the rendered element the editor is standing in for, so the overlay isn't
+// drawn on top of stale glyphs. For a text node that's its own <text>; for a
+// label it's the owned label <text> (a shape's own geometry stays visible).
+function hideEditorTarget() {
+  restoreEditorTarget();
+  if (!editorTargetId) return;
+  const layer = getDocLayer();
+  if (!layer) return;
+  let el = null;
+  if (editorMode === "text-node") {
+    el = layer.querySelector(`text[data-id="${cssEscape(editorTargetId)}"]`);
+  } else if (editorMode === "label") {
+    el = layer.querySelector(`text[data-role="label"][data-owner="${cssEscape(editorTargetId)}"]`);
+  }
+  if (el) {
+    el.style.visibility = "hidden";
+    editorHiddenEl = el;
+  }
+}
+
+function restoreEditorTarget() {
+  if (editorHiddenEl) {
+    try { editorHiddenEl.style.visibility = ""; } catch { /* detached by a re-render */ }
+    editorHiddenEl = null;
+  }
+}
+
 function closeTextEditor() {
   if (editorEl) {
     try { editorEl.remove(); } catch { /* already detached */ }
   }
+  restoreEditorTarget();
   editorEl = null;
   editorTargetId = null;
   editorMode = null;

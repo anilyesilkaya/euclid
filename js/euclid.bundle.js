@@ -238,8 +238,12 @@
     if (typeof n !== "number") return n;
     return Math.abs(n) < 1e-9 ? 0 : Math.round(n * 1e3) / 1e3;
   }
-  function anchorsToPath(anchors, closed) {
+  function anchorsToPath(anchors, closed, cornerRadius = 0) {
     if (!Array.isArray(anchors) || anchors.length === 0) return "";
+    if (cornerRadius > 0) {
+      const rounded = anchorsToRoundedPath(anchors, closed, cornerRadius);
+      if (rounded) return rounded;
+    }
     const p = (n) => round(n);
     const out = [`M ${p(anchors[0].x)} ${p(anchors[0].y)}`];
     const seg = (a, b) => {
@@ -256,6 +260,58 @@
       out.push(seg(anchors[anchors.length - 1], anchors[0]));
       out.push("Z");
     }
+    return out.join(" ");
+  }
+  function anchorsToRoundedPath(anchors, closed, radius) {
+    const n = anchors.length;
+    if (n < 2) return "";
+    const p = (v) => round(v);
+    const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
+    const prevIdx = (i) => (i - 1 + n) % n;
+    const nextIdx = (i) => (i + 1) % n;
+    function roundInfo(i) {
+      if (!closed && (i === 0 || i === n - 1)) return null;
+      const v = anchors[i];
+      if (!v || v.cin || v.cout) return null;
+      const pv = anchors[prevIdx(i)];
+      const nx = anchors[nextIdx(i)];
+      if (!pv || !nx) return null;
+      if (pv.cout || nx.cin) return null;
+      const dPrev = dist(pv, v);
+      const dNext = dist(v, nx);
+      if (dPrev < 1e-6 || dNext < 1e-6) return null;
+      const t = Math.min(radius, dPrev / 2, dNext / 2);
+      if (t < 1e-4) return null;
+      const uPrev = { x: (pv.x - v.x) / dPrev, y: (pv.y - v.y) / dPrev };
+      const uNext = { x: (nx.x - v.x) / dNext, y: (nx.y - v.y) / dNext };
+      return {
+        A: { x: v.x + uPrev.x * t, y: v.y + uPrev.y * t },
+        // approach (from prev)
+        B: { x: v.x + uNext.x * t, y: v.y + uNext.y * t },
+        // depart (toward next)
+        V: { x: v.x, y: v.y }
+      };
+    }
+    const info = anchors.map((_, i) => roundInfo(i));
+    if (!info.some(Boolean)) return "";
+    const start = info[0] ? info[0].B : anchors[0];
+    const out = [`M ${p(start.x)} ${p(start.y)}`];
+    const segStr = (a, b, approach) => {
+      const hasCurve = a.cout || b.cin;
+      if (!hasCurve) return `L ${p(approach.x)} ${p(approach.y)}`;
+      const c1 = a.cout || { x: a.x, y: a.y };
+      const c2 = b.cin || { x: b.x, y: b.y };
+      return `C ${p(c1.x)} ${p(c1.y)} ${p(c2.x)} ${p(c2.y)} ${p(b.x)} ${p(b.y)}`;
+    };
+    const segCount = closed ? n : n - 1;
+    for (let s = 0; s < segCount; s++) {
+      const i = s;
+      const j = closed ? nextIdx(s) : s + 1;
+      const approach = info[j] ? info[j].A : anchors[j];
+      out.push(segStr(anchors[i], anchors[j], approach));
+      if (info[j]) out.push(`Q ${p(info[j].V.x)} ${p(info[j].V.y)} ${p(info[j].B.x)} ${p(info[j].B.y)}`);
+    }
+    if (closed) out.push("Z");
     return out.join(" ");
   }
   function anchorsBBox(anchors) {
@@ -549,7 +605,7 @@
   }
   function applyCommon(el, node) {
     el.setAttribute("data-id", node.id);
-    const derivedD = node.type === "path" && Array.isArray(node.anchors) ? anchorsToPath(node.anchors, node.closed) : null;
+    const derivedD = node.type === "path" && Array.isArray(node.anchors) ? anchorsToPath(node.anchors, node.closed, node.cornerRadius || 0) : null;
     for (const [k, v] of Object.entries(node.attrs)) {
       if (v === void 0 || v === null || v === "") continue;
       if (k === "d" && derivedD !== null) continue;
@@ -594,7 +650,7 @@
     }
     if (boxes.length === 1) {
       const node = findNode(getDoc(), boxes[0].id);
-      if (node && node.type === "path" && Array.isArray(node.anchors) && node.anchors.length) {
+      if (node && node.type === "path" && Array.isArray(node.anchors) && node.anchors.length && !node.shapeMode) {
         drawPathSelection(boxes[0], node);
         return;
       }
@@ -1967,7 +2023,7 @@
     if (!penInProgress) {
       const id = newId("p");
       beginTransaction();
-      const node2 = {
+      const node = {
         id,
         type: "path",
         transform: emptyTransform(),
@@ -1976,24 +2032,20 @@
         attrs: { fill: "none", stroke: "#222222", "stroke-width": 2, opacity: 1 }
       };
       mutate((root) => {
-        root.children.push(node2);
+        root.children.push(node);
       });
       penInProgress = { id };
       ensurePenPreview();
       gesture = { type: "pen", origin: p, last: p, moved: false, penId: id, index: 0 };
       return;
     }
-    const node = findNode(getDoc(), penInProgress.id);
-    if (node && Array.isArray(node.anchors) && node.anchors.length >= 2) {
-      const first = node.anchors[0];
-      if (Math.hypot(p.x - first.x, p.y - first.y) <= PEN_CLOSE_PX * canvasPixelScale()) {
-        mutate((root) => {
-          const n = findNode(root, penInProgress.id);
-          if (n) n.closed = true;
-        });
-        commitPen();
-        return;
-      }
+    if (penCloseAnchor(p)) {
+      mutate((root) => {
+        const n = findNode(root, penInProgress.id);
+        if (n) n.closed = true;
+      });
+      commitPen();
+      return;
     }
     let index = 0;
     mutate((root) => {
@@ -2017,12 +2069,29 @@
   }
   function finishPenAnchor(g, e) {
   }
+  function penCloseAnchor(p) {
+    if (!penInProgress) return null;
+    const node = findNode(getDoc(), penInProgress.id);
+    if (!node || !Array.isArray(node.anchors) || node.anchors.length < 2) return null;
+    const first = node.anchors[0];
+    if (Math.hypot(p.x - first.x, p.y - first.y) <= PEN_CLOSE_PX * canvasPixelScale()) return first;
+    return null;
+  }
   function ensurePenPreview() {
     if (!penInProgress || penInProgress.previewEl) return;
     const line = document.createElementNS(SVG_NS3, "line");
     line.setAttribute("class", "rubber");
     penInProgress.previewEl = line;
     getTransientLayer().appendChild(line);
+  }
+  function ensurePenCloseHint() {
+    if (!penInProgress) return null;
+    if (penInProgress.closeHintEl) return penInProgress.closeHintEl;
+    const c = document.createElementNS(SVG_NS3, "circle");
+    c.setAttribute("class", "pen-close-hint");
+    penInProgress.closeHintEl = c;
+    getTransientLayer().appendChild(c);
+    return c;
   }
   function updatePenPreview(p) {
     if (!penInProgress) return;
@@ -2031,10 +2100,24 @@
     const last = node.anchors[node.anchors.length - 1];
     const line = penInProgress.previewEl;
     if (!line) return;
+    const closeTo = penCloseAnchor(p);
+    const end = closeTo || p;
     line.setAttribute("x1", last.x);
     line.setAttribute("y1", last.y);
-    line.setAttribute("x2", p.x);
-    line.setAttribute("y2", p.y);
+    line.setAttribute("x2", end.x);
+    line.setAttribute("y2", end.y);
+    const hint = ensurePenCloseHint();
+    if (hint) {
+      if (closeTo) {
+        const r3 = PEN_CLOSE_PX * canvasPixelScale();
+        hint.setAttribute("cx", closeTo.x);
+        hint.setAttribute("cy", closeTo.y);
+        hint.setAttribute("r", r3);
+        hint.removeAttribute("hidden");
+      } else {
+        hint.setAttribute("hidden", "");
+      }
+    }
   }
   function commitPen() {
     if (!penInProgress) return;
@@ -2235,8 +2318,16 @@
   function cloneShape(node) {
     return {
       attrs: { ...node.attrs, points: node.attrs.points ? node.attrs.points.map((p) => [...p]) : void 0 },
-      transform: { ...node.transform }
+      transform: { ...node.transform },
+      // Pen paths resize by scaling their structured anchors — snapshot them too.
+      anchors: Array.isArray(node.anchors) ? node.anchors.map(cloneAnchor) : void 0
     };
+  }
+  function cloneAnchor(a) {
+    const c = { x: a.x, y: a.y };
+    if (a.cin) c.cin = { x: a.cin.x, y: a.cin.y };
+    if (a.cout) c.cout = { x: a.cout.x, y: a.cout.y };
+    return c;
   }
   function updateResize(p, _e) {
     const { id, dir, origin, orig } = gesture;
@@ -2361,6 +2452,39 @@
       const sx = bw ? r3.w / bw : 1;
       const sy = bh ? r3.h / bh : 1;
       n.attrs.points = pts.map(([x, y]) => [r3.x + (x - minX) * sx, r3.y + (y - minY) * sy]);
+    } else if (n.type === "path" && Array.isArray(orig.anchors)) {
+      const A = orig.anchors;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      const acc = (x, y) => {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      };
+      for (const a of A) {
+        acc(a.x, a.y);
+        if (a.cin) acc(a.cin.x, a.cin.y);
+        if (a.cout) acc(a.cout.x, a.cout.y);
+      }
+      if (!isFinite(minX)) return;
+      const bw = maxX - minX, bh = maxY - minY;
+      const r3 = applyBox(minX, minY, bw, bh);
+      const sx = bw ? r3.w / bw : 1;
+      const sy = bh ? r3.h / bh : 1;
+      const mapPt = (x, y) => ({ x: r3.x + (x - minX) * sx, y: r3.y + (y - minY) * sy });
+      n.anchors = A.map((a) => {
+        const na = mapPt(a.x, a.y);
+        const out = { x: round22(na.x), y: round22(na.y) };
+        if (a.cin) {
+          const c = mapPt(a.cin.x, a.cin.y);
+          out.cin = { x: round22(c.x), y: round22(c.y) };
+        }
+        if (a.cout) {
+          const c = mapPt(a.cout.x, a.cout.y);
+          out.cout = { x: round22(c.x), y: round22(c.y) };
+        }
+        return out;
+      });
     }
   }
   function scaleSubtree(node, ax, ay, sx, sy) {
@@ -2399,6 +2523,13 @@
       a.y2 *= sy;
     } else if (node.type === "polyline" && Array.isArray(a.points)) {
       a.points = a.points.map(([x, y]) => [x * sx, y * sy]);
+    } else if (node.type === "path" && Array.isArray(node.anchors)) {
+      node.anchors = node.anchors.map((an) => {
+        const out = { x: an.x * sx, y: an.y * sy };
+        if (an.cin) out.cin = { x: an.cin.x * sx, y: an.cin.y * sy };
+        if (an.cout) out.cout = { x: an.cout.x * sx, y: an.cout.y * sy };
+        return out;
+      });
     } else if (node.type === "text") {
       a.x *= sx;
       a.y *= sy;
@@ -2552,6 +2683,7 @@
   var editorEl = null;
   var editorTargetId = null;
   var editorMode = null;
+  var editorHiddenEl = null;
   function openTextEditor(node) {
     editorTargetId = node.id;
     editorMode = "text-node";
@@ -2577,6 +2709,7 @@
     document.body.appendChild(el);
     editorEl = el;
     Object.assign(el.style, positionFn());
+    hideEditorTarget();
     el.addEventListener("keydown", (evt) => {
       if (evt.key === "Enter" && !evt.shiftKey) {
         evt.preventDefault();
@@ -2700,6 +2833,31 @@
       }
     }
   }
+  function hideEditorTarget() {
+    restoreEditorTarget();
+    if (!editorTargetId) return;
+    const layer = getDocLayer();
+    if (!layer) return;
+    let el = null;
+    if (editorMode === "text-node") {
+      el = layer.querySelector(`text[data-id="${cssEscape2(editorTargetId)}"]`);
+    } else if (editorMode === "label") {
+      el = layer.querySelector(`text[data-role="label"][data-owner="${cssEscape2(editorTargetId)}"]`);
+    }
+    if (el) {
+      el.style.visibility = "hidden";
+      editorHiddenEl = el;
+    }
+  }
+  function restoreEditorTarget() {
+    if (editorHiddenEl) {
+      try {
+        editorHiddenEl.style.visibility = "";
+      } catch {
+      }
+      editorHiddenEl = null;
+    }
+  }
   function closeTextEditor() {
     if (editorEl) {
       try {
@@ -2707,6 +2865,7 @@
       } catch {
       }
     }
+    restoreEditorTarget();
     editorEl = null;
     editorTargetId = null;
     editorMode = null;
@@ -3066,6 +3225,11 @@
   var pArrowEnd;
   var connectorArrowStartRow;
   var connectorArrowEndRow;
+  var pathDivider;
+  var pShapeToggle;
+  var pathCornerRow;
+  var pCornerRadius;
+  var pCornerRadiusNum;
   var clipboard = null;
   var gridApi = null;
   function mount5(root) {
@@ -3157,6 +3321,11 @@
     pArrowEnd = root.querySelector("#p-arrow-end");
     connectorArrowStartRow = root.querySelector("#connector-arrow-start-row");
     connectorArrowEndRow = root.querySelector("#connector-arrow-end-row");
+    pathDivider = root.querySelector("#path-divider");
+    pShapeToggle = root.querySelector("#p-shape-toggle");
+    pathCornerRow = root.querySelector("#path-corner-row");
+    pCornerRadius = root.querySelector("#p-corner-radius");
+    pCornerRadiusNum = root.querySelector("#p-corner-radius-num");
     pFill.addEventListener("input", () => applyToSelection("fill", pFill.value));
     pFill.addEventListener("change", () => historyCommitAfter(() => applyToSelection("fill", pFill.value)));
     pFillNone.addEventListener("change", () => historyRecord(() => applyToSelection("fill", pFillNone.checked ? "none" : pFill.value)));
@@ -3200,6 +3369,26 @@
     pConnectorRoute.addEventListener("change", () => historyRecord(() => applyConnectorRoute(pConnectorRoute.value)));
     pArrowStart.addEventListener("change", () => historyRecord(() => applyConnectorArrow("arrowStart", pArrowStart.checked)));
     pArrowEnd.addEventListener("change", () => historyRecord(() => applyConnectorArrow("arrowEnd", pArrowEnd.checked)));
+    pShapeToggle.addEventListener("click", () => historyRecord(() => toggleShapeMode()));
+    pCornerRadius.addEventListener("pointerdown", () => beginTransaction());
+    pCornerRadius.addEventListener("input", () => {
+      pCornerRadiusNum.value = pCornerRadius.value;
+      ensureTransaction();
+      applyCornerRadius(Number(pCornerRadius.value));
+    });
+    pCornerRadius.addEventListener("change", () => historyCommitAfter(() => applyCornerRadius(Number(pCornerRadius.value))));
+    pCornerRadiusNum.addEventListener("input", () => {
+      const v = Math.max(0, Number(pCornerRadiusNum.value) || 0);
+      ensureTransaction();
+      pCornerRadius.value = v;
+      applyCornerRadius(v);
+    });
+    pCornerRadiusNum.addEventListener("change", () => {
+      const v = Math.max(0, Number(pCornerRadiusNum.value) || 0);
+      pCornerRadiusNum.value = v;
+      pCornerRadius.value = v;
+      historyCommitAfter(() => applyCornerRadius(v));
+    });
     pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
     pTextColor.addEventListener("change", () => historyCommitAfter(() => applyTextColor(pTextColor.value)));
     pRotation.addEventListener("input", () => {
@@ -3298,6 +3487,30 @@
       }
     });
   }
+  function toggleShapeMode() {
+    const ids = [...getSelection()];
+    if (ids.length !== 1) return;
+    const id = ids[0];
+    mutate((root) => {
+      const n = findNode(root, id);
+      if (!n || n.type !== "path") return;
+      if (n.shapeMode) delete n.shapeMode;
+      else n.shapeMode = true;
+    });
+  }
+  function applyCornerRadius(value) {
+    const r3 = Math.max(0, Number(value) || 0);
+    const ids = [...getSelection()];
+    if (ids.length === 0) return;
+    mutate((root) => {
+      for (const id of ids) {
+        const n = findNode(root, id);
+        if (!n || n.type !== "path") continue;
+        if (r3 > 0) n.cornerRadius = r3;
+        else delete n.cornerRadius;
+      }
+    });
+  }
   function applyRotation(deg) {
     const ids = [...getSelection()];
     if (ids.length === 0) return;
@@ -3388,6 +3601,25 @@
       if (pConnectorRoute) pConnectorRoute.value = connectors[0].route === "orthogonal" ? "orthogonal" : "straight";
       if (pArrowStart) pArrowStart.checked = !!connectors[0].arrowStart;
       if (pArrowEnd) pArrowEnd.checked = !!connectors[0].arrowEnd;
+    }
+    const soleNode = ids.length === 1 ? findNode(doc2, ids[0]) : null;
+    const isClosedPath = !!(soleNode && soleNode.type === "path" && Array.isArray(soleNode.anchors) && soleNode.anchors.length >= 3 && soleNode.closed);
+    if (pathDivider) pathDivider.hidden = !isClosedPath;
+    if (pShapeToggle) {
+      pShapeToggle.hidden = !isClosedPath;
+      if (isClosedPath) {
+        const inShape = !!soleNode.shapeMode;
+        pShapeToggle.textContent = inShape ? "Edit points" : "Convert to shape";
+        pShapeToggle.classList.toggle("active", inShape);
+      }
+    }
+    if (pathCornerRow) pathCornerRow.hidden = !isClosedPath;
+    if (isClosedPath) {
+      const cr = soleNode.cornerRadius || 0;
+      if (document.activeElement !== pCornerRadius && document.activeElement !== pCornerRadiusNum) {
+        pCornerRadius.value = cr;
+        pCornerRadiusNum.value = cr;
+      }
     }
     let sample = null;
     for (const id of ids) {
@@ -3998,7 +4230,7 @@
   function buildAttrs(node) {
     const attrs = [];
     const emit2 = (k, v) => attrs.push(`${k}="${formatValue(k, v)}"`);
-    const derivedD = node.type === "path" && Array.isArray(node.anchors) ? anchorsToPath(node.anchors, node.closed) : null;
+    const derivedD = node.type === "path" && Array.isArray(node.anchors) ? anchorsToPath(node.anchors, node.closed, node.cornerRadius || 0) : null;
     for (const k of GEOMETRY_ATTRS) {
       if (!(k in node.attrs)) continue;
       if (k === "d" && derivedD !== null) continue;

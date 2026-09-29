@@ -312,7 +312,7 @@ function applyCommon(el, node) {
   // Pen-drawn paths derive their `d` from the structured anchor model; any stored
   // attrs.d is stale, so skip it and emit the freshly computed geometry instead.
   const derivedD = node.type === "path" && Array.isArray(node.anchors)
-    ? anchorsToPath(node.anchors, node.closed)
+    ? anchorsToPath(node.anchors, node.closed, node.cornerRadius || 0)
     : null;
   for (const [k, v] of Object.entries(node.attrs)) {
     if (v === undefined || v === null || v === "") continue;
@@ -370,9 +370,11 @@ function renderSelection() {
 
   // A lone selected pen path (structured anchors) gets direct node-editing chrome
   // — anchor + bézier-handle points — instead of a bbox with resize/rotate handles.
+  // Unless it's in "shape mode" (Convert to shape): then it falls through to the
+  // normal single-selection bbox chrome so it can be resized/rotated like a rect.
   if (boxes.length === 1) {
     const node = findNode(getDoc(), boxes[0].id);
-    if (node && node.type === "path" && Array.isArray(node.anchors) && node.anchors.length) {
+    if (node && node.type === "path" && Array.isArray(node.anchors) && node.anchors.length && !node.shapeMode) {
       drawPathSelection(boxes[0], node);
       return;
     }

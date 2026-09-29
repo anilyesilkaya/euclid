@@ -94,6 +94,17 @@ save/open format with debounced autosave.
     reopens a closed path) or a control point to retract it (smooth → corner).
     Pointer positions convert via the element matrix (`toLocalPoint`), so editing
     works on rotated paths; every edit commits one history entry.
+  - **Closed-path extras.** ✅ **Done.** A single closed path shows a **PATH**
+    section in the property panel with two non-destructive controls. **Convert to
+    shape** flips the path into "shape mode" (`node.shapeMode`) — it gets the
+    normal bbox with resize + rotate handles instead of node-edit chrome, so it
+    transforms like a rect; the button reads **Edit points** to flip back, and
+    anchors are preserved either way (resize scales `node.anchors` + handles via
+    new `path` branches in `resizeNode` / `scaleGeom`). **Corner radius**
+    (`node.cornerRadius`) rounds the path's hard corners — a live render/export
+    parameter fed to `anchorsToPath`, which fillets each roundable corner (a
+    handle-less vertex bordered by two straight segments) with a quadratic,
+    clamped to half of each adjacent edge. Anchors are never mutated by either.
 - **M7 — Gradients.** A paint-server model (currently rejected on import by
   design in `import.js`), fill / stroke gradient UI, and export / import support.
 - **M10 — Illustrator-style rotate + copy and "Transform Again."** Make the
