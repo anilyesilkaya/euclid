@@ -457,6 +457,63 @@ html, body {
 }
 #props-form .panel-btn[hidden] { display: none; }
 
+/* Paint-type dropdown (Solid / Linear) sits inline before the color swatch. */
+#props-form select.paint-type {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Gradient editor block, revealed when a paint slot is set to Linear. */
+.gradient-editor {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.gradient-editor[hidden] { display: none; }
+.gradient-editor .grad-preview {
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.gradient-editor > label {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.gradient-editor .grad-angle { width: 92px; }
+.grad-stops {
+  display: grid;
+  gap: 4px;
+}
+.grad-stop {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px;
+}
+.grad-stop input[type="color"] {
+  width: 32px; height: 22px; padding: 0;
+  border: 1px solid var(--border); background: transparent;
+}
+.grad-stop .grad-stop-offset { width: 100%; }
+.grad-stop .grad-stop-del {
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+.grad-stop .grad-stop-del:hover:not([disabled]) { color: #ff9a9a; border-color: #ff5050; }
+.grad-stop .grad-stop-del[disabled] { opacity: 0.35; cursor: not-allowed; }
+.gradient-editor .grad-add { padding: 4px 10px; font-size: 12px; }
+
 /* Align grid */
 .align-grid {
   display: grid;

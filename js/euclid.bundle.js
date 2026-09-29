@@ -354,6 +354,17 @@
   function paintRef(node, slot) {
     return hasGradient(node, slot) ? `url(#${gradientId(node.id, slot)})` : null;
   }
+  function defaultLinearGradient(fromColor = "#4c9aff") {
+    const c = normalizeHex(fromColor) || "#4c9aff";
+    return {
+      type: "linear",
+      angle: 90,
+      stops: [
+        { offset: 0, color: c, opacity: 1 },
+        { offset: 1, color: "#ffffff", opacity: 1 }
+      ]
+    };
+  }
   function normalizeGradient(g) {
     if (!isValidGradient(g)) return null;
     const stops = g.stops.map((s) => ({
@@ -3340,6 +3351,11 @@
   var pathCornerRow;
   var pCornerRadius;
   var pCornerRadiusNum;
+  var pFillType;
+  var pStrokeType;
+  var fillNoneRow;
+  var strokeNoneRow;
+  var gradEditors = {};
   var clipboard = null;
   var gridApi = null;
   function mount5(root) {
@@ -3436,6 +3452,11 @@
     pathCornerRow = root.querySelector("#path-corner-row");
     pCornerRadius = root.querySelector("#p-corner-radius");
     pCornerRadiusNum = root.querySelector("#p-corner-radius-num");
+    pFillType = root.querySelector("#p-fill-type");
+    pStrokeType = root.querySelector("#p-stroke-type");
+    fillNoneRow = root.querySelector("#fill-none-row");
+    strokeNoneRow = root.querySelector("#stroke-none-row");
+    wireGradientEditors(root);
     pFill.addEventListener("input", () => applyToSelection("fill", pFill.value));
     pFill.addEventListener("change", () => historyCommitAfter(() => applyToSelection("fill", pFill.value)));
     pFillNone.addEventListener("change", () => historyRecord(() => applyToSelection("fill", pFillNone.checked ? "none" : pFill.value)));
@@ -3466,6 +3487,8 @@
       pOpacity.value = v;
       historyCommitAfter(() => applyToSelection("opacity", v));
     });
+    pFillType.addEventListener("change", () => historyRecord(() => applyPaintType("fill", pFillType.value)));
+    pStrokeType.addEventListener("change", () => historyRecord(() => applyPaintType("stroke", pStrokeType.value)));
     for (const input of [pFill, pStroke, pStrokeWidth, pOpacity, pTextColor]) {
       input.addEventListener("pointerdown", () => beginTransaction());
     }
@@ -3687,6 +3710,215 @@
       }
     });
   }
+  function wireGradientEditors(root) {
+    for (const slot of ["fill", "stroke"]) {
+      const rootEl = root.querySelector(`#${slot}-gradient`);
+      if (!rootEl) continue;
+      const ed = {
+        root: rootEl,
+        preview: rootEl.querySelector(".grad-preview"),
+        angle: rootEl.querySelector(".grad-angle"),
+        angleNum: rootEl.querySelector(".grad-angle-num"),
+        stops: rootEl.querySelector(".grad-stops"),
+        add: rootEl.querySelector(".grad-add")
+      };
+      gradEditors[slot] = ed;
+      ed.angle.addEventListener("pointerdown", () => beginTransaction());
+      ed.angle.addEventListener("input", () => {
+        ed.angleNum.value = ed.angle.value;
+        ensureTransaction();
+        updateGradient(slot, (g) => {
+          g.angle = Number(ed.angle.value);
+        });
+      });
+      ed.angle.addEventListener("change", () => historyCommitAfter(() => updateGradient(slot, (g) => {
+        g.angle = Number(ed.angle.value);
+      })));
+      ed.angleNum.addEventListener("input", () => {
+        const v = clampAngle(ed.angleNum.value);
+        if (v === null) return;
+        ensureTransaction();
+        ed.angle.value = v;
+        updateGradient(slot, (g) => {
+          g.angle = v;
+        });
+      });
+      ed.angleNum.addEventListener("change", () => {
+        const v = clampAngle(ed.angleNum.value);
+        if (v === null) {
+          refreshPropertyPanel();
+          return;
+        }
+        ed.angleNum.value = v;
+        ed.angle.value = v;
+        historyCommitAfter(() => updateGradient(slot, (g) => {
+          g.angle = v;
+        }));
+      });
+      ed.add.addEventListener("click", () => historyRecord(() => addStop(slot)));
+      ed.stops.addEventListener("pointerdown", (e) => {
+        if (e.target.matches(".grad-stop-color, .grad-stop-offset")) beginTransaction();
+      });
+      ed.stops.addEventListener("input", (e) => {
+        const row = e.target.closest(".grad-stop");
+        if (!row) return;
+        const i = Number(row.dataset.index);
+        ensureTransaction();
+        if (e.target.matches(".grad-stop-color")) {
+          updateGradient(slot, (g) => {
+            if (g.stops[i]) g.stops[i].color = e.target.value;
+          });
+        } else if (e.target.matches(".grad-stop-offset")) {
+          updateGradient(slot, (g) => {
+            if (g.stops[i]) g.stops[i].offset = Number(e.target.value) / 100;
+          });
+        }
+      });
+      ed.stops.addEventListener("change", (e) => {
+        if (e.target.matches(".grad-stop-color, .grad-stop-offset")) commit("gradient stop");
+      });
+      ed.stops.addEventListener("click", (e) => {
+        const del = e.target.closest(".grad-stop-del");
+        if (!del || del.disabled) return;
+        const row = e.target.closest(".grad-stop");
+        if (row) historyRecord(() => removeStop(slot, Number(row.dataset.index)));
+      });
+    }
+  }
+  function applyPaintType(slot, type) {
+    const ids = [...getSelection()];
+    if (ids.length === 0) return;
+    const seed = slot === "fill" ? pFill.value : pStroke.value;
+    mutate((root) => {
+      for (const id of ids) {
+        for (const n of shapeTargets(root, id)) {
+          if (type === "linear") {
+            const existing = getGradient(n, slot);
+            if (!existing) {
+              if (!n.gradients) n.gradients = {};
+              n.gradients[slot] = defaultLinearGradient(n.attrs[slot] || seed);
+            }
+          } else {
+            const g = getGradient(n, slot);
+            if (g) n.attrs[slot] = g.stops[0]?.color || n.attrs[slot] || seed;
+            if (n.gradients) {
+              delete n.gradients[slot];
+              if (!Object.keys(n.gradients).length) delete n.gradients;
+            }
+          }
+        }
+      }
+    });
+  }
+  function updateGradient(slot, fn) {
+    const ids = [...getSelection()];
+    if (ids.length === 0) return;
+    mutate((root) => {
+      for (const id of ids) {
+        for (const n of shapeTargets(root, id)) {
+          const g = getGradient(n, slot);
+          if (g) fn(g);
+        }
+      }
+    });
+  }
+  function addStop(slot) {
+    updateGradient(slot, (g) => {
+      const stops = g.stops.slice().sort((a, b) => a.offset - b.offset);
+      let gap = -1, at = 0.5, lo = stops[0], hi = stops[stops.length - 1];
+      for (let i = 0; i < stops.length - 1; i++) {
+        const d = stops[i + 1].offset - stops[i].offset;
+        if (d > gap) {
+          gap = d;
+          at = (stops[i].offset + stops[i + 1].offset) / 2;
+          lo = stops[i];
+          hi = stops[i + 1];
+        }
+      }
+      g.stops.push({ offset: at, color: mixHex(lo.color, hi.color, 0.5), opacity: 1 });
+      g.stops.sort((a, b) => a.offset - b.offset);
+    });
+  }
+  function removeStop(slot, index) {
+    updateGradient(slot, (g) => {
+      if (g.stops.length <= 2) return;
+      g.stops.splice(index, 1);
+    });
+  }
+  function shapeTargets(root, id) {
+    const n = findNode(root, id);
+    if (!n) return [];
+    if (n.type === "group") {
+      const out = [];
+      walk(n, (node) => {
+        if (node.type !== "group") out.push(node);
+      });
+      return out;
+    }
+    return [n];
+  }
+  function clampAngle(raw) {
+    if (raw === "" || raw === null || raw === void 0) return null;
+    let n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    return (Math.round(n) % 360 + 360) % 360;
+  }
+  function mixHex(a, b, t) {
+    const pa = hexToRgb(a), pb = hexToRgb(b);
+    if (!pa || !pb) return pa ? a : pb ? b : "#808080";
+    const m = (x, y) => Math.round(x + (y - x) * t);
+    return rgbToHex(m(pa[0], pb[0]), m(pa[1], pb[1]), m(pa[2], pb[2]));
+  }
+  function hexToRgb(v) {
+    const s = normalizeColor(v, null);
+    if (!s) return null;
+    return [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5, 7), 16)];
+  }
+  function rgbToHex(r3, g, b) {
+    const h = (n) => n.toString(16).padStart(2, "0");
+    return "#" + h(r3) + h(g) + h(b);
+  }
+  function syncGradientEditor(slot, def) {
+    const ed = gradEditors[slot];
+    if (!ed) return;
+    const active = isValidGradient(def);
+    ed.root.hidden = !active;
+    if (!active) return;
+    const focused = ed.root.contains(document.activeElement);
+    if (!focused) {
+      ed.angle.value = def.angle;
+      ed.angleNum.value = def.angle;
+    }
+    const stopsCss = def.stops.slice().sort((a, b) => a.offset - b.offset).map((s) => `${s.color} ${Math.round(s.offset * 100)}%`).join(", ");
+    ed.preview.style.background = `linear-gradient(${def.angle}deg, ${stopsCss})`;
+    if (focused) return;
+    ed.stops.innerHTML = "";
+    const canDelete = def.stops.length > 2;
+    def.stops.forEach((s, i) => {
+      const row = document.createElement("div");
+      row.className = "grad-stop";
+      row.dataset.index = i;
+      const color = document.createElement("input");
+      color.type = "color";
+      color.className = "grad-stop-color";
+      color.value = normalizeColor(s.color, "#000000");
+      const offset = document.createElement("input");
+      offset.type = "range";
+      offset.className = "grad-stop-offset";
+      offset.min = 0;
+      offset.max = 100;
+      offset.step = 1;
+      offset.value = Math.round((s.offset ?? 0) * 100);
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "grad-stop-del";
+      del.textContent = "\xD7";
+      del.title = "Delete stop";
+      del.disabled = !canDelete;
+      row.append(color, offset, del);
+      ed.stops.appendChild(row);
+    });
+  }
   function refreshPropertyPanel() {
     const ids = [...getSelection()];
     if (ids.length === 0) {
@@ -3743,6 +3975,14 @@
     const stroke = sample.attrs.stroke ?? "#000000";
     const sw = sample.attrs["stroke-width"] ?? 1;
     const op = sample.attrs.opacity ?? 1;
+    const fillGrad = getGradient(sample, "fill");
+    const strokeGrad = getGradient(sample, "stroke");
+    pFillType.value = fillGrad ? "linear" : "solid";
+    pStrokeType.value = strokeGrad ? "linear" : "solid";
+    if (fillNoneRow) fillNoneRow.hidden = !!fillGrad;
+    if (strokeNoneRow) strokeNoneRow.hidden = !!strokeGrad;
+    syncGradientEditor("fill", fillGrad);
+    syncGradientEditor("stroke", strokeGrad);
     pFillNone.checked = fill === "none";
     pFill.value = normalizeColor(fill, "#88ccee");
     pStrokeNone.checked = stroke === "none";

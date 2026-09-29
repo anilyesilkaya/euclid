@@ -88,10 +88,48 @@
         <h2>Properties</h2>
         <div id="props-empty" class="empty">No selection</div>
         <div id="props-form" hidden>
-          <label>Fill <input type="color" id="p-fill"></label>
-          <label class="chk"><input type="checkbox" id="p-fill-none"> None</label>
-          <label>Stroke <input type="color" id="p-stroke"></label>
-          <label class="chk"><input type="checkbox" id="p-stroke-none"> None</label>
+          <label>Fill
+            <span class="opacity-group">
+              <select id="p-fill-type" class="paint-type">
+                <option value="solid">Solid</option>
+                <option value="linear">Linear</option>
+              </select>
+              <input type="color" id="p-fill">
+            </span>
+          </label>
+          <label class="chk" id="fill-none-row"><input type="checkbox" id="p-fill-none"> None</label>
+          <div class="gradient-editor" id="fill-gradient" data-slot="fill" hidden>
+            <div class="grad-preview"></div>
+            <label>Angle
+              <span class="opacity-group">
+                <input type="range" class="grad-angle" min="0" max="360" step="1">
+                <input type="number" class="grad-angle-num" min="0" max="360" step="1">
+              </span>
+            </label>
+            <div class="grad-stops"></div>
+            <button type="button" class="panel-btn grad-add">+ Add stop</button>
+          </div>
+          <label>Stroke
+            <span class="opacity-group">
+              <select id="p-stroke-type" class="paint-type">
+                <option value="solid">Solid</option>
+                <option value="linear">Linear</option>
+              </select>
+              <input type="color" id="p-stroke">
+            </span>
+          </label>
+          <label class="chk" id="stroke-none-row"><input type="checkbox" id="p-stroke-none"> None</label>
+          <div class="gradient-editor" id="stroke-gradient" data-slot="stroke" hidden>
+            <div class="grad-preview"></div>
+            <label>Angle
+              <span class="opacity-group">
+                <input type="range" class="grad-angle" min="0" max="360" step="1">
+                <input type="number" class="grad-angle-num" min="0" max="360" step="1">
+              </span>
+            </label>
+            <div class="grad-stops"></div>
+            <button type="button" class="panel-btn grad-add">+ Add stop</button>
+          </div>
           <label>Stroke width <input type="number" id="p-stroke-width" min="0" step="0.5"></label>
           <label>Opacity
             <span class="opacity-group">
