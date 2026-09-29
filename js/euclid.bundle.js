@@ -2579,6 +2579,7 @@
   var editorEl = null;
   var editorTargetId = null;
   var editorMode = null;
+  var editorHiddenEl = null;
   function openTextEditor(node) {
     editorTargetId = node.id;
     editorMode = "text-node";
@@ -2604,6 +2605,7 @@
     document.body.appendChild(el);
     editorEl = el;
     Object.assign(el.style, positionFn());
+    hideEditorTarget();
     el.addEventListener("keydown", (evt) => {
       if (evt.key === "Enter" && !evt.shiftKey) {
         evt.preventDefault();
@@ -2727,6 +2729,31 @@
       }
     }
   }
+  function hideEditorTarget() {
+    restoreEditorTarget();
+    if (!editorTargetId) return;
+    const layer = getDocLayer();
+    if (!layer) return;
+    let el = null;
+    if (editorMode === "text-node") {
+      el = layer.querySelector(`text[data-id="${cssEscape2(editorTargetId)}"]`);
+    } else if (editorMode === "label") {
+      el = layer.querySelector(`text[data-role="label"][data-owner="${cssEscape2(editorTargetId)}"]`);
+    }
+    if (el) {
+      el.style.visibility = "hidden";
+      editorHiddenEl = el;
+    }
+  }
+  function restoreEditorTarget() {
+    if (editorHiddenEl) {
+      try {
+        editorHiddenEl.style.visibility = "";
+      } catch {
+      }
+      editorHiddenEl = null;
+    }
+  }
   function closeTextEditor() {
     if (editorEl) {
       try {
@@ -2734,6 +2761,7 @@
       } catch {
       }
     }
+    restoreEditorTarget();
     editorEl = null;
     editorTargetId = null;
     editorMode = null;

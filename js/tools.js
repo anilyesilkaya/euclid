@@ -1559,6 +1559,7 @@ function handleTextDown(e, p) {
 let editorEl = null;
 let editorTargetId = null;
 let editorMode = null; // "text-node" | "label"
+let editorHiddenEl = null; // rendered <text> hidden while its inline editor is open
 
 export function openTextEditor(node) {
   editorTargetId = node.id;
@@ -1586,6 +1587,10 @@ function showEditor(initial, positionFn) {
   document.body.appendChild(el);
   editorEl = el;
   Object.assign(el.style, positionFn());
+
+  // Hide the rendered glyphs underneath so the live edit isn't drawn over the
+  // stale rendered text (otherwise the two overlap until the next re-render).
+  hideEditorTarget();
 
   el.addEventListener("keydown", (evt) => {
     if (evt.key === "Enter" && !evt.shiftKey) {
@@ -1721,10 +1726,38 @@ function cancelTextEditor() {
   }
 }
 
+// Hide the rendered element the editor is standing in for, so the overlay isn't
+// drawn on top of stale glyphs. For a text node that's its own <text>; for a
+// label it's the owned label <text> (a shape's own geometry stays visible).
+function hideEditorTarget() {
+  restoreEditorTarget();
+  if (!editorTargetId) return;
+  const layer = getDocLayer();
+  if (!layer) return;
+  let el = null;
+  if (editorMode === "text-node") {
+    el = layer.querySelector(`text[data-id="${cssEscape(editorTargetId)}"]`);
+  } else if (editorMode === "label") {
+    el = layer.querySelector(`text[data-role="label"][data-owner="${cssEscape(editorTargetId)}"]`);
+  }
+  if (el) {
+    el.style.visibility = "hidden";
+    editorHiddenEl = el;
+  }
+}
+
+function restoreEditorTarget() {
+  if (editorHiddenEl) {
+    try { editorHiddenEl.style.visibility = ""; } catch { /* detached by a re-render */ }
+    editorHiddenEl = null;
+  }
+}
+
 function closeTextEditor() {
   if (editorEl) {
     try { editorEl.remove(); } catch { /* already detached */ }
   }
+  restoreEditorTarget();
   editorEl = null;
   editorTargetId = null;
   editorMode = null;
