@@ -140,10 +140,21 @@ save/open format with debounced autosave.
 
 ## Phase 4 — Styling & polish (small, high-visibility; can interleave)
 
-- **M8 — Extended styling UI.** Dash / linecap / linejoin, rounded corners
-  (rx / ry), font weight / style, text alignment. Export / import already
-  preserve these attrs; this is mostly property-panel wiring in `ui.js` +
-  `index.html`.
+- **M8 — Extended styling UI.** ✅ **Done.** Property-panel wiring for the
+  styling attributes export/import already round-tripped:
+  - **Rectangle corner radius** — a RECTANGLE section with a `rx`/`ry` slider +
+    number box, shown when the selection contains a rect (directly or in a
+    group). Clamped to half the shorter side; 0 clears the rounding. Makes the
+    rounded-rect flyout tool's corners editable instead of fixed.
+  - **Stroke style** — Dash (Solid / Dashed / Dotted → `stroke-dasharray`),
+    Line cap (Butt / Round / Square), Line join (Miter / Round / Bevel),
+    shown when the sample has a stroke. Added the SVG defaults (butt / miter /
+    none) to the exporter's `DEFAULTS` so unset values stay out of the output.
+  - **Text style** — Bold / Italic toggles (apply to text nodes *and* shape /
+    connector labels) and a left / center / right align control (text-anchor,
+    text-nodes only). Taught the label renderers + export paths to carry
+    `font-weight` / `font-style`, which they previously dropped.
+  All controls fan out to group descendants and commit one history entry each.
 - **M9 — Circle tool.** ✅ **Done.** Added the toolbar button (Circle (C),
   hold Shift for a perfect circle) + `TOOL_KEYS` `c` binding; the `circle`
   type was already handled in draw / resize / render / import.
