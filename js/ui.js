@@ -8,14 +8,41 @@ import * as history from "./history.js";
 import { setTool, getTool, cancelPolyline, cancelPen, finishPen, isTextEditing, openLabelEditor } from "./tools.js";
 import { align } from "./align.js";
 import * as persist from "./persist.js";
+import { getGradient, isValidGradient, defaultLinearGradient } from "./paint.js";
 
 const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", n: "pen", t: "text", x: "connector" };
+
+// Illustrator-style tool flyouts: a slot button hides related variants revealed
+// on right-click or press-and-hold. The variants share the slot; picking one
+// makes it the slot's active tool (and its icon shows on the slot button).
+const FLYOUT_HOLD_MS = 250;
+const TOOL_ICONS = {
+  rect: '<rect x="4" y="6" width="16" height="12" fill="none" stroke="currentColor" stroke-width="2"/>',
+  roundrect: '<rect x="4" y="6" width="16" height="12" rx="4" ry="4" fill="none" stroke="currentColor" stroke-width="2"/>',
+  ellipse: '<ellipse cx="12" cy="12" rx="9" ry="6" fill="none" stroke="currentColor" stroke-width="2"/>',
+  circle: '<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/>',
+};
+const TOOL_FLYOUTS = {
+  rect: [
+    { tool: "rect", title: "Rectangle (R)" },
+    { tool: "roundrect", title: "Rounded rectangle" },
+  ],
+  ellipse: [
+    { tool: "ellipse", title: "Ellipse (E) — hold Shift for a circle" },
+    { tool: "circle", title: "Circle (C) — hold Shift for a perfect circle" },
+  ],
+};
+// The tool currently shown on each slot button (defaults to the slot's first variant).
+const slotActiveTool = { rect: "rect", ellipse: "ellipse" };
+let openFlyout = null; // { slot, el } while a flyout is visible
 
 let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity, pOpacityNum;
 let pText, pFontSize, pFontFamily, pTextColor, pRotation;
 let pConnectorRoute, connectorDivider, connectorRouteRow;
 let pArrowStart, pArrowEnd, connectorArrowStartRow, connectorArrowEndRow;
 let pathDivider, pShapeToggle, pathCornerRow, pCornerRadius, pCornerRadiusNum;
+let pFillType, pStrokeType, fillNoneRow, strokeNoneRow;
+let gradEditors = {}; // slot -> { root, preview, angle, angleNum, stops, add }
 let clipboard = null;
 let gridApi = null;   // set by mountGrid; used by keyboard shortcuts
 
@@ -98,14 +125,109 @@ export function mountGrid(grid) {
 function wireToolbar(root) {
   const btns = root.querySelectorAll("#toolbar .tool");
   for (const b of btns) {
-    b.addEventListener("click", () => setTool(b.dataset.tool));
+    const slot = b.dataset.slot;
+    let openedByHold = false; // set when a hold opened the flyout; swallows the trailing click
+    b.addEventListener("click", () => {
+      if (openedByHold) { openedByHold = false; return; }
+      // A click picks the slot's active tool (or a plain tool for non-slot buttons).
+      setTool(slot ? slotActiveTool[slot] : b.dataset.tool);
+    });
+    if (!slot) continue;
+
+    // Right-click opens the flyout (suppress the browser context menu).
+    b.addEventListener("contextmenu", (e) => { e.preventDefault(); showFlyout(slot, b); });
+
+    // Press-and-hold also opens it, Illustrator-style. A quick tap falls through
+    // to the click handler above; the hold timer opens the flyout mid-press.
+    let holdTimer = null;
+    const clearHold = () => { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } };
+    b.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      clearHold();
+      holdTimer = setTimeout(() => { holdTimer = null; openedByHold = true; showFlyout(slot, b); }, FLYOUT_HOLD_MS);
+    });
+    b.addEventListener("pointerup", clearHold);
+    b.addEventListener("pointerleave", clearHold);
   }
+
+  // Dismiss an open flyout on any outside interaction.
+  document.addEventListener("pointerdown", (e) => {
+    if (openFlyout && !openFlyout.el.contains(e.target) &&
+        !(e.target.closest && e.target.closest(`.tool[data-slot="${openFlyout.slot}"]`))) {
+      closeFlyout();
+    }
+  }, true);
+  window.addEventListener("blur", closeFlyout);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeFlyout(); });
+}
+
+// Build (or reuse) and position the variant flyout next to its slot button.
+function showFlyout(slot, slotBtn) {
+  const variants = TOOL_FLYOUTS[slot];
+  if (!variants) return;
+  closeFlyout();
+  const fly = document.createElement("div");
+  fly.className = "tool-flyout";
+  for (const v of variants) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "tool";
+    b.dataset.tool = v.tool;
+    b.title = v.title;
+    b.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20">${TOOL_ICONS[v.tool] || ""}</svg>`;
+    b.classList.toggle("active", getTool() === v.tool);
+    b.addEventListener("click", () => {
+      slotActiveTool[slot] = v.tool;
+      updateSlotIcon(slot, slotBtn);
+      setTool(v.tool);
+      closeFlyout();
+    });
+    fly.appendChild(b);
+  }
+  document.body.appendChild(fly);
+  const r = slotBtn.getBoundingClientRect();
+  fly.style.left = `${Math.round(r.right + 6)}px`;
+  fly.style.top = `${Math.round(r.top)}px`;
+  openFlyout = { slot, el: fly };
+}
+
+function closeFlyout() {
+  if (openFlyout) { openFlyout.el.remove(); openFlyout = null; }
+}
+
+// Swap the slot button's icon + tooltip to reflect its active variant.
+function updateSlotIcon(slot, slotBtn) {
+  const tool = slotActiveTool[slot];
+  const svg = slotBtn.querySelector("svg");
+  if (svg && TOOL_ICONS[tool]) svg.innerHTML = TOOL_ICONS[tool];
+  const variant = (TOOL_FLYOUTS[slot] || []).find(v => v.tool === tool);
+  if (variant) slotBtn.title = variant.title;
+  slotBtn.dataset.tool = tool;
 }
 
 function reflectToolInUI(tool) {
+  // A slot button is active when the current tool is any of its variants; keep
+  // the slot's remembered active tool in sync so its icon matches.
   document.querySelectorAll("#toolbar .tool").forEach(b => {
-    b.classList.toggle("active", b.dataset.tool === tool);
+    const slot = b.dataset.slot;
+    if (slot) {
+      const variants = (TOOL_FLYOUTS[slot] || []).map(v => v.tool);
+      const owns = variants.includes(tool);
+      if (owns && slotActiveTool[slot] !== tool) {
+        slotActiveTool[slot] = tool;
+        updateSlotIcon(slot, b);
+      }
+      b.classList.toggle("active", owns);
+    } else {
+      b.classList.toggle("active", b.dataset.tool === tool);
+    }
   });
+  // Keep any open flyout's highlight current.
+  if (openFlyout) {
+    openFlyout.el.querySelectorAll(".tool").forEach(b => {
+      b.classList.toggle("active", b.dataset.tool === tool);
+    });
+  }
 }
 
 function wireProperties(root) {
@@ -135,6 +257,11 @@ function wireProperties(root) {
   pathCornerRow = root.querySelector("#path-corner-row");
   pCornerRadius = root.querySelector("#p-corner-radius");
   pCornerRadiusNum = root.querySelector("#p-corner-radius-num");
+  pFillType = root.querySelector("#p-fill-type");
+  pStrokeType = root.querySelector("#p-stroke-type");
+  fillNoneRow = root.querySelector("#fill-none-row");
+  strokeNoneRow = root.querySelector("#stroke-none-row");
+  wireGradientEditors(root);
 
   pFill.addEventListener("input", () => applyToSelection("fill", pFill.value));
   pFill.addEventListener("change", () => historyCommitAfter(() => applyToSelection("fill", pFill.value)));
@@ -163,6 +290,11 @@ function wireProperties(root) {
     pOpacity.value = v;
     historyCommitAfter(() => applyToSelection("opacity", v));
   });
+
+  // Paint type (Solid / Linear) per slot. Switching to Linear seeds a default
+  // gradient from the current solid color; switching to Solid drops it.
+  pFillType.addEventListener("change", () => historyRecord(() => applyPaintType("fill", pFillType.value)));
+  pStrokeType.addEventListener("change", () => historyRecord(() => applyPaintType("stroke", pStrokeType.value)));
 
   // On mousedown of a slider/color, open a transaction so the drag becomes one history entry.
   for (const input of [pFill, pStroke, pStrokeWidth, pOpacity, pTextColor]) {
@@ -427,6 +559,223 @@ function applyToSelection(key, value) {
   });
 }
 
+// --- Gradient editors (fill + stroke) ---
+
+// Cache the DOM of each slot's gradient editor and wire its controls once.
+// Stop rows are (re)built by refresh; their controls are handled via delegation.
+function wireGradientEditors(root) {
+  for (const slot of ["fill", "stroke"]) {
+    const rootEl = root.querySelector(`#${slot}-gradient`);
+    if (!rootEl) continue;
+    const ed = {
+      root: rootEl,
+      preview: rootEl.querySelector(".grad-preview"),
+      angle: rootEl.querySelector(".grad-angle"),
+      angleNum: rootEl.querySelector(".grad-angle-num"),
+      stops: rootEl.querySelector(".grad-stops"),
+      add: rootEl.querySelector(".grad-add"),
+    };
+    gradEditors[slot] = ed;
+
+    // Angle: live-preview on input (one history entry per drag), synced both ways.
+    ed.angle.addEventListener("pointerdown", () => history.beginTransaction());
+    ed.angle.addEventListener("input", () => {
+      ed.angleNum.value = ed.angle.value;
+      history.ensureTransaction();
+      updateGradient(slot, (g) => { g.angle = Number(ed.angle.value); });
+    });
+    ed.angle.addEventListener("change", () => historyCommitAfter(() => updateGradient(slot, (g) => { g.angle = Number(ed.angle.value); })));
+    ed.angleNum.addEventListener("input", () => {
+      const v = clampAngle(ed.angleNum.value);
+      if (v === null) return;
+      history.ensureTransaction();
+      ed.angle.value = v;
+      updateGradient(slot, (g) => { g.angle = v; });
+    });
+    ed.angleNum.addEventListener("change", () => {
+      const v = clampAngle(ed.angleNum.value);
+      if (v === null) { refreshPropertyPanel(); return; }
+      ed.angleNum.value = v; ed.angle.value = v;
+      historyCommitAfter(() => updateGradient(slot, (g) => { g.angle = v; }));
+    });
+
+    ed.add.addEventListener("click", () => historyRecord(() => addStop(slot)));
+
+    // Delegated stop-row controls. Color inputs live-preview within a transaction
+    // opened on pointerdown; offset sliders do the same; delete is one-shot.
+    ed.stops.addEventListener("pointerdown", (e) => {
+      if (e.target.matches(".grad-stop-color, .grad-stop-offset")) history.beginTransaction();
+    });
+    ed.stops.addEventListener("input", (e) => {
+      const row = e.target.closest(".grad-stop");
+      if (!row) return;
+      const i = Number(row.dataset.index);
+      history.ensureTransaction();
+      if (e.target.matches(".grad-stop-color")) {
+        updateGradient(slot, (g) => { if (g.stops[i]) g.stops[i].color = e.target.value; });
+      } else if (e.target.matches(".grad-stop-offset")) {
+        updateGradient(slot, (g) => { if (g.stops[i]) g.stops[i].offset = Number(e.target.value) / 100; });
+      }
+    });
+    ed.stops.addEventListener("change", (e) => {
+      if (e.target.matches(".grad-stop-color, .grad-stop-offset")) history.commit("gradient stop");
+    });
+    ed.stops.addEventListener("click", (e) => {
+      const del = e.target.closest(".grad-stop-del");
+      if (!del || del.disabled) return;
+      const row = e.target.closest(".grad-stop");
+      if (row) historyRecord(() => removeStop(slot, Number(row.dataset.index)));
+    });
+  }
+}
+
+// Switch a paint slot between solid and a linear gradient. Solid → linear seeds
+// a default gradient from the current swatch; linear → solid drops the gradient
+// and writes the first stop's color back as the solid fill so nothing goes black.
+function applyPaintType(slot, type) {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  const seed = slot === "fill" ? pFill.value : pStroke.value;
+  mutate((root) => {
+    for (const id of ids) {
+      for (const n of shapeTargets(root, id)) {
+        if (type === "linear") {
+          const existing = getGradient(n, slot);
+          if (!existing) {
+            if (!n.gradients) n.gradients = {};
+            n.gradients[slot] = defaultLinearGradient(n.attrs[slot] || seed);
+          }
+        } else {
+          const g = getGradient(n, slot);
+          if (g) n.attrs[slot] = g.stops[0]?.color || n.attrs[slot] || seed;
+          if (n.gradients) { delete n.gradients[slot]; if (!Object.keys(n.gradients).length) delete n.gradients; }
+        }
+      }
+    }
+  });
+}
+
+// Mutate the gradient in `slot` on every selected shape via `fn(gradientDef)`.
+function updateGradient(slot, fn) {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  mutate((root) => {
+    for (const id of ids) {
+      for (const n of shapeTargets(root, id)) {
+        const g = getGradient(n, slot);
+        if (g) fn(g);
+      }
+    }
+  });
+}
+
+// Add a stop at the midpoint of the largest gap, colored by interpolation.
+function addStop(slot) {
+  updateGradient(slot, (g) => {
+    const stops = g.stops.slice().sort((a, b) => a.offset - b.offset);
+    let gap = -1, at = 0.5, lo = stops[0], hi = stops[stops.length - 1];
+    for (let i = 0; i < stops.length - 1; i++) {
+      const d = stops[i + 1].offset - stops[i].offset;
+      if (d > gap) { gap = d; at = (stops[i].offset + stops[i + 1].offset) / 2; lo = stops[i]; hi = stops[i + 1]; }
+    }
+    g.stops.push({ offset: at, color: mixHex(lo.color, hi.color, 0.5), opacity: 1 });
+    g.stops.sort((a, b) => a.offset - b.offset);
+  });
+}
+
+// Remove a stop by index, but never drop below two (a gradient needs two stops).
+function removeStop(slot, index) {
+  updateGradient(slot, (g) => {
+    if (g.stops.length <= 2) return;
+    g.stops.splice(index, 1);
+  });
+}
+
+// All shape nodes a selection id targets: the node itself, or every descendant
+// shape of a selected group (matching applyToSelection's group fan-out).
+function shapeTargets(root, id) {
+  const n = findNode(root, id);
+  if (!n) return [];
+  if (n.type === "group") {
+    const out = [];
+    walk(n, (node) => { if (node.type !== "group") out.push(node); });
+    return out;
+  }
+  return [n];
+}
+
+function clampAngle(raw) {
+  if (raw === "" || raw === null || raw === undefined) return null;
+  let n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  return ((Math.round(n) % 360) + 360) % 360;
+}
+
+// Linear blend of two #rrggbb colors (t in 0..1) → #rrggbb.
+function mixHex(a, b, t) {
+  const pa = hexToRgb(a), pb = hexToRgb(b);
+  if (!pa || !pb) return pa ? a : (pb ? b : "#808080");
+  const m = (x, y) => Math.round(x + (y - x) * t);
+  return rgbToHex(m(pa[0], pb[0]), m(pa[1], pb[1]), m(pa[2], pb[2]));
+}
+function hexToRgb(v) {
+  const s = normalizeColor(v, null);
+  if (!s) return null;
+  return [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5, 7), 16)];
+}
+function rgbToHex(r, g, b) {
+  const h = (n) => n.toString(16).padStart(2, "0");
+  return "#" + h(r) + h(g) + h(b);
+}
+
+// Rebuild a slot's gradient editor UI from a gradient def (or hide it if none).
+function syncGradientEditor(slot, def) {
+  const ed = gradEditors[slot];
+  if (!ed) return;
+  const active = isValidGradient(def);
+  ed.root.hidden = !active;
+  if (!active) return;
+  // Only guard against clobbering controls the user is *actively editing*: the
+  // angle inputs, or a stop's color/offset input mid-drag. Focus on the add or
+  // delete buttons must NOT block the rebuild — otherwise the stop they just
+  // added or removed never appears until the panel is refreshed by re-selecting.
+  const focus = document.activeElement;
+  const editingAngle = focus === ed.angle || focus === ed.angleNum;
+  const editingStop = ed.stops.contains(focus) &&
+    (focus.classList.contains("grad-stop-offset") || focus.classList.contains("grad-stop-color"));
+  if (!editingAngle) {
+    ed.angle.value = def.angle;
+    ed.angleNum.value = def.angle;
+  }
+  // CSS preview of the gradient (angle 90 = top→bottom, matching our SVG mapping).
+  const stopsCss = def.stops
+    .slice().sort((a, b) => a.offset - b.offset)
+    .map((s) => `${s.color} ${Math.round(s.offset * 100)}%`).join(", ");
+  ed.preview.style.background = `linear-gradient(${def.angle}deg, ${stopsCss})`;
+  // Don't rebuild rows while dragging a stop's slider/color (would break the drag).
+  if (editingStop) return;
+  ed.stops.innerHTML = "";
+  const canDelete = def.stops.length > 2;
+  def.stops.forEach((s, i) => {
+    const row = document.createElement("div");
+    row.className = "grad-stop";
+    row.dataset.index = i;
+    const color = document.createElement("input");
+    color.type = "color"; color.className = "grad-stop-color";
+    color.value = normalizeColor(s.color, "#000000");
+    const offset = document.createElement("input");
+    offset.type = "range"; offset.className = "grad-stop-offset";
+    offset.min = 0; offset.max = 100; offset.step = 1;
+    offset.value = Math.round((s.offset ?? 0) * 100);
+    const del = document.createElement("button");
+    del.type = "button"; del.className = "grad-stop-del"; del.textContent = "×";
+    del.title = "Delete stop";
+    del.disabled = !canDelete;
+    row.append(color, offset, del);
+    ed.stops.appendChild(row);
+  });
+}
+
 export function refreshPropertyPanel() {
   const ids = [...getSelection()];
   if (ids.length === 0) {
@@ -495,6 +844,17 @@ export function refreshPropertyPanel() {
   const stroke = sample.attrs.stroke ?? "#000000";
   const sw = sample.attrs["stroke-width"] ?? 1;
   const op = sample.attrs.opacity ?? 1;
+
+  // Paint type per slot: a gradient on the sample flips the slot to Linear, hides
+  // the None checkbox, and shows the gradient editor; otherwise it's Solid.
+  const fillGrad = getGradient(sample, "fill");
+  const strokeGrad = getGradient(sample, "stroke");
+  pFillType.value = fillGrad ? "linear" : "solid";
+  pStrokeType.value = strokeGrad ? "linear" : "solid";
+  if (fillNoneRow) fillNoneRow.hidden = !!fillGrad;
+  if (strokeNoneRow) strokeNoneRow.hidden = !!strokeGrad;
+  syncGradientEditor("fill", fillGrad);
+  syncGradientEditor("stroke", strokeGrad);
 
   pFillNone.checked = (fill === "none");
   pFill.value = normalizeColor(fill, "#88ccee");

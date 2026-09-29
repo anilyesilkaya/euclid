@@ -5,6 +5,7 @@
 import { getDoc, getSelection, findNode } from "./state.js";
 import { routeStraight, routeOrthogonal } from "./connectors.js";
 import { anchorsToPath, anchorsBBox } from "./paths.js";
+import { collectGradients, linearGradientElement, paintRef, PAINT_SLOTS } from "./paint.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const HANDLE_SIZE = 8;      // px in screen space (via non-scaling stroke + fixed size)
@@ -67,6 +68,10 @@ export function renderAll() {
 function renderDoc() {
   while (docLayer.firstChild) docLayer.removeChild(docLayer.firstChild);
   const doc = getDoc();
+  // Pass 0: gradient paint servers. Injected as a <defs> at the top of #doc-layer
+  // so `fill="url(#eg-…)"` references (set by applyCommon) resolve on the live
+  // canvas — render.js otherwise relies only on the static <defs> in index.html.
+  renderGradientDefs(doc);
   // Pass 1: shapes/groups/text. Connectors are routed from their neighbours' live
   // canvas boxes, so they can only be measured once the shapes are in the DOM.
   const connectorNodes = [];
@@ -86,6 +91,19 @@ function renderDoc() {
       if (mid) docLayer.appendChild(connectorLabelElement(node, mid));
     }
   }
+}
+
+// Inject a <defs> holding every gradient the document references. Rebuilt each
+// render (cheap; ids are deterministic per node+slot) and prepended to #doc-layer.
+function renderGradientDefs(doc) {
+  const grads = collectGradients(doc);
+  if (!grads.length) return;
+  const defs = document.createElementNS(SVG_NS, "defs");
+  for (const g of grads) {
+    const el = linearGradientElement(g.def, g.id);
+    if (el) defs.appendChild(el);
+  }
+  docLayer.appendChild(defs);
 }
 
 // Build a connector element from already-resolved geometry. Orthogonal routes
@@ -317,9 +335,16 @@ function applyCommon(el, node) {
   for (const [k, v] of Object.entries(node.attrs)) {
     if (v === undefined || v === null || v === "") continue;
     if (k === "d" && derivedD !== null) continue;
+    // A gradient in this paint slot overrides the stored solid color.
+    if ((k === "fill" || k === "stroke") && paintRef(node, k)) continue;
     el.setAttribute(k, formatAttr(k, v));
   }
   if (derivedD !== null) el.setAttribute("d", derivedD);
+  // Apply gradient paint refs (fill/stroke) synthesized from node.gradients.
+  for (const slot of PAINT_SLOTS) {
+    const ref = paintRef(node, slot);
+    if (ref) el.setAttribute(slot, ref);
+  }
   const t = transformToString(node.transform);
   if (t) el.setAttribute("transform", t);
 }

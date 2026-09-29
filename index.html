@@ -11,14 +11,11 @@
       <button class="tool" data-tool="select" title="Select (V)">
         <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 3 L4 17 L8 13 L11 20 L13 19 L10 12 L16 12 Z" fill="currentColor"/></svg>
       </button>
-      <button class="tool" data-tool="rect" title="Rectangle (R)">
+      <button class="tool" data-tool="rect" data-slot="rect" title="Rectangle (R) — hold or right-click for rounded">
         <svg viewBox="0 0 24 24" width="20" height="20"><rect x="4" y="6" width="16" height="12" fill="none" stroke="currentColor" stroke-width="2"/></svg>
       </button>
-      <button class="tool" data-tool="ellipse" title="Ellipse (E) — hold Shift for a circle">
+      <button class="tool" data-tool="ellipse" data-slot="ellipse" title="Ellipse (E) — hold or right-click for circle; hold Shift while drawing for a circle">
         <svg viewBox="0 0 24 24" width="20" height="20"><ellipse cx="12" cy="12" rx="9" ry="6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-      </button>
-      <button class="tool" data-tool="circle" title="Circle (C) — hold Shift for a perfect circle">
-        <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
       </button>
       <button class="tool" data-tool="line" title="Line (L)">
         <svg viewBox="0 0 24 24" width="20" height="20"><line x1="4" y1="20" x2="20" y2="4" stroke="currentColor" stroke-width="2"/></svg>
@@ -88,10 +85,48 @@
         <h2>Properties</h2>
         <div id="props-empty" class="empty">No selection</div>
         <div id="props-form" hidden>
-          <label>Fill <input type="color" id="p-fill"></label>
-          <label class="chk"><input type="checkbox" id="p-fill-none"> None</label>
-          <label>Stroke <input type="color" id="p-stroke"></label>
-          <label class="chk"><input type="checkbox" id="p-stroke-none"> None</label>
+          <label>Fill
+            <span class="opacity-group">
+              <select id="p-fill-type" class="paint-type">
+                <option value="solid">Solid</option>
+                <option value="linear">Linear</option>
+              </select>
+              <input type="color" id="p-fill">
+            </span>
+          </label>
+          <label class="chk" id="fill-none-row"><input type="checkbox" id="p-fill-none"> None</label>
+          <div class="gradient-editor" id="fill-gradient" data-slot="fill" hidden>
+            <div class="grad-preview"></div>
+            <label>Angle
+              <span class="opacity-group">
+                <input type="range" class="grad-angle" min="0" max="360" step="1">
+                <input type="number" class="grad-angle-num" min="0" max="360" step="1">
+              </span>
+            </label>
+            <div class="grad-stops"></div>
+            <button type="button" class="panel-btn grad-add">+ Add stop</button>
+          </div>
+          <label>Stroke
+            <span class="opacity-group">
+              <select id="p-stroke-type" class="paint-type">
+                <option value="solid">Solid</option>
+                <option value="linear">Linear</option>
+              </select>
+              <input type="color" id="p-stroke">
+            </span>
+          </label>
+          <label class="chk" id="stroke-none-row"><input type="checkbox" id="p-stroke-none"> None</label>
+          <div class="gradient-editor" id="stroke-gradient" data-slot="stroke" hidden>
+            <div class="grad-preview"></div>
+            <label>Angle
+              <span class="opacity-group">
+                <input type="range" class="grad-angle" min="0" max="360" step="1">
+                <input type="number" class="grad-angle-num" min="0" max="360" step="1">
+              </span>
+            </label>
+            <div class="grad-stops"></div>
+            <button type="button" class="panel-btn grad-add">+ Add stop</button>
+          </div>
           <label>Stroke width <input type="number" id="p-stroke-width" min="0" step="0.5"></label>
           <label>Opacity
             <span class="opacity-group">
@@ -193,7 +228,7 @@
   <div id="import-modal" class="modal" hidden aria-modal="true" role="dialog" aria-labelledby="import-title">
     <div class="modal-card">
       <h3 id="import-title">Import SVG</h3>
-      <p class="modal-hint">Paste SVG markup. Illustrator exports with class-based styles work. Gradients, patterns, filters, clip paths, masks, &lt;use&gt;, &lt;image&gt;, and non-rigid transforms (scale/skew) will cause the import to fail.</p>
+      <p class="modal-hint">Paste SVG markup. Illustrator exports with class-based styles work. Linear gradients are supported; radial gradients, patterns, filters, clip paths, masks, &lt;use&gt;, &lt;image&gt;, and non-rigid transforms (scale/skew) will cause the import to fail.</p>
       <textarea id="import-text" spellcheck="false" placeholder="<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; viewBox=&quot;0 0 200 100&quot;>&#10;  <rect x=&quot;10&quot; y=&quot;10&quot; width=&quot;80&quot; height=&quot;80&quot; fill=&quot;#88ccee&quot;/>&#10;</svg>"></textarea>
       <div class="modal-row">
         <label class="chk"><input type="radio" name="import-mode" value="append" checked> Append</label>

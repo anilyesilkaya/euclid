@@ -335,8 +335,113 @@
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
   }
 
-  // js/render.js
+  // js/paint.js
   var SVG_NS = "http://www.w3.org/2000/svg";
+  var PAINT_SLOTS = ["fill", "stroke"];
+  function getGradient(node, slot) {
+    const g = node && node.gradients && node.gradients[slot];
+    return isValidGradient(g) ? g : null;
+  }
+  function hasGradient(node, slot) {
+    return getGradient(node, slot) !== null;
+  }
+  function isValidGradient(g) {
+    return !!g && g.type === "linear" && Array.isArray(g.stops) && g.stops.length >= 2;
+  }
+  function gradientId(nodeId, slot) {
+    return `eg-${nodeId}-${slot}`;
+  }
+  function paintRef(node, slot) {
+    return hasGradient(node, slot) ? `url(#${gradientId(node.id, slot)})` : null;
+  }
+  function defaultLinearGradient(fromColor = "#4c9aff") {
+    const c = normalizeHex(fromColor) || "#4c9aff";
+    return {
+      type: "linear",
+      angle: 90,
+      stops: [
+        { offset: 0, color: c, opacity: 1 },
+        { offset: 1, color: "#ffffff", opacity: 1 }
+      ]
+    };
+  }
+  function normalizeGradient(g) {
+    if (!isValidGradient(g)) return null;
+    const stops = g.stops.map((s) => ({
+      offset: clamp01(num(s.offset, 0)),
+      color: normalizeHex(s.color) || "#000000",
+      opacity: clamp01(num(s.opacity, 1))
+    })).sort((a, b) => a.offset - b.offset);
+    return { type: "linear", angle: num(g.angle, 0), stops };
+  }
+  function linearGradientElement(def, id) {
+    const g = normalizeGradient(def);
+    if (!g) return null;
+    const grad = document.createElementNS(SVG_NS, "linearGradient");
+    grad.setAttribute("id", id);
+    grad.setAttribute("x1", "0");
+    grad.setAttribute("y1", "0");
+    grad.setAttribute("x2", "1");
+    grad.setAttribute("y2", "0");
+    if (g.angle) grad.setAttribute("gradientTransform", `rotate(${round2(g.angle)} 0.5 0.5)`);
+    for (const s of g.stops) {
+      const stop = document.createElementNS(SVG_NS, "stop");
+      stop.setAttribute("offset", round2(s.offset));
+      stop.setAttribute("stop-color", s.color);
+      if (s.opacity !== 1) stop.setAttribute("stop-opacity", round2(s.opacity));
+      grad.appendChild(stop);
+    }
+    return grad;
+  }
+  function linearGradientMarkup(def, id, pad, indentUnit) {
+    const g = normalizeGradient(def);
+    if (!g) return [];
+    const attrs = [`id="${id}"`, `x1="0"`, `y1="0"`, `x2="1"`, `y2="0"`];
+    if (g.angle) attrs.push(`gradientTransform="rotate(${round2(g.angle)} 0.5 0.5)"`);
+    const out = [`${pad}<linearGradient ${attrs.join(" ")}>`];
+    for (const s of g.stops) {
+      const sa = [`offset="${round2(s.offset)}"`, `stop-color="${s.color}"`];
+      if (s.opacity !== 1) sa.push(`stop-opacity="${round2(s.opacity)}"`);
+      out.push(`${pad}${indentUnit}<stop ${sa.join(" ")}/>`);
+    }
+    out.push(`${pad}</linearGradient>`);
+    return out;
+  }
+  function collectGradients(root) {
+    const out = [];
+    (function rec(node) {
+      if (!node || typeof node !== "object") return;
+      for (const slot of PAINT_SLOTS) {
+        const def = getGradient(node, slot);
+        if (def) out.push({ id: gradientId(node.id, slot), slot, def });
+      }
+      if (Array.isArray(node.children)) for (const c of node.children) rec(c);
+    })(root);
+    return out;
+  }
+  function num(v, d) {
+    const n = typeof v === "number" ? v : parseFloat(v);
+    return Number.isFinite(n) ? n : d;
+  }
+  function clamp01(n) {
+    return n < 0 ? 0 : n > 1 ? 1 : n;
+  }
+  function round2(n) {
+    if (typeof n !== "number") return n;
+    return Math.abs(n) < 1e-9 ? 0 : Math.round(n * 1e3) / 1e3;
+  }
+  function normalizeHex(v) {
+    if (typeof v !== "string") return null;
+    const s = v.trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
+    if (/^#[0-9a-fA-F]{3}$/.test(s)) {
+      return ("#" + s[1] + s[1] + s[2] + s[2] + s[3] + s[3]).toLowerCase();
+    }
+    return null;
+  }
+
+  // js/render.js
+  var SVG_NS2 = "http://www.w3.org/2000/svg";
   var HANDLE_SIZE = 8;
   var ROT_STEM_LEN = 24;
   var docLayer;
@@ -348,11 +453,11 @@
     canvasSvg = svg3;
     docLayer = svg3.querySelector("#doc-layer");
     const chrome = svg3.querySelector("#chrome-layer");
-    chromeHover = document.createElementNS(SVG_NS, "g");
+    chromeHover = document.createElementNS(SVG_NS2, "g");
     chromeHover.setAttribute("id", "chrome-hover");
-    chromeSelection = document.createElementNS(SVG_NS, "g");
+    chromeSelection = document.createElementNS(SVG_NS2, "g");
     chromeSelection.setAttribute("id", "chrome-selection");
-    chromeTransient = document.createElementNS(SVG_NS, "g");
+    chromeTransient = document.createElementNS(SVG_NS2, "g");
     chromeTransient.setAttribute("id", "chrome-transient");
     chrome.appendChild(chromeHover);
     chrome.appendChild(chromeSelection);
@@ -371,10 +476,10 @@
     if (!el) return;
     const box = safeBBox(el);
     if (!(box.width > 0 || box.height > 0)) return;
-    const wrap = document.createElementNS(SVG_NS, "g");
+    const wrap = document.createElementNS(SVG_NS2, "g");
     const t = el.getAttribute("transform");
     if (t) wrap.setAttribute("transform", t);
-    const outline = document.createElementNS(SVG_NS, "rect");
+    const outline = document.createElementNS(SVG_NS2, "rect");
     outline.setAttribute("class", "hover-outline");
     outline.setAttribute("x", box.x);
     outline.setAttribute("y", box.y);
@@ -394,6 +499,7 @@
   function renderDoc() {
     while (docLayer.firstChild) docLayer.removeChild(docLayer.firstChild);
     const doc2 = getDoc();
+    renderGradientDefs(doc2);
     const connectorNodes = [];
     for (const child of doc2.children) {
       if (child.type === "connector") {
@@ -412,6 +518,16 @@
       }
     }
   }
+  function renderGradientDefs(doc2) {
+    const grads = collectGradients(doc2);
+    if (!grads.length) return;
+    const defs = document.createElementNS(SVG_NS2, "defs");
+    for (const g of grads) {
+      const el = linearGradientElement(g.def, g.id);
+      if (el) defs.appendChild(el);
+    }
+    docLayer.appendChild(defs);
+  }
   function connectorElement(node, geom) {
     const el = geom.points ? polylineConnector(geom.points) : lineConnector(geom);
     el.setAttribute("data-id", node.id);
@@ -426,12 +542,12 @@
   }
   function connectorLabelElement(node, mid) {
     const style = node.labelStyle || {};
-    const t = document.createElementNS(SVG_NS, "text");
+    const t = document.createElementNS(SVG_NS2, "text");
     t.setAttribute("data-id", node.id);
     t.setAttribute("data-role", "label");
     t.setAttribute("data-owner", node.id);
-    t.setAttribute("x", round2(mid.x));
-    t.setAttribute("y", round2(mid.y));
+    t.setAttribute("x", round3(mid.x));
+    t.setAttribute("y", round3(mid.y));
     t.setAttribute("text-anchor", "middle");
     t.setAttribute("dominant-baseline", "middle");
     t.setAttribute("font-family", style["font-family"] || "sans-serif");
@@ -472,16 +588,16 @@
     return null;
   }
   function lineConnector(geom) {
-    const line = document.createElementNS(SVG_NS, "line");
-    line.setAttribute("x1", round2(geom.x1));
-    line.setAttribute("y1", round2(geom.y1));
-    line.setAttribute("x2", round2(geom.x2));
-    line.setAttribute("y2", round2(geom.y2));
+    const line = document.createElementNS(SVG_NS2, "line");
+    line.setAttribute("x1", round3(geom.x1));
+    line.setAttribute("y1", round3(geom.y1));
+    line.setAttribute("x2", round3(geom.x2));
+    line.setAttribute("y2", round3(geom.y2));
     return line;
   }
   function polylineConnector(points) {
-    const pl = document.createElementNS(SVG_NS, "polyline");
-    pl.setAttribute("points", points.map(([x, y]) => `${round2(x)},${round2(y)}`).join(" "));
+    const pl = document.createElementNS(SVG_NS2, "polyline");
+    pl.setAttribute("points", points.map(([x, y]) => `${round3(x)},${round3(y)}`).join(" "));
     pl.setAttribute("fill", "none");
     return pl;
   }
@@ -505,22 +621,22 @@
   }
   function nodeToElement(node) {
     if (node.type === "group") {
-      const g = document.createElementNS(SVG_NS, "g");
+      const g = document.createElementNS(SVG_NS2, "g");
       applyCommon(g, node);
       for (const child of node.children) g.appendChild(nodeToElement(child));
       if (node.label) g.appendChild(labelElement(node, bboxOfGroupChildren(node)));
       return g;
     }
     if (node.type === "text") {
-      const el2 = document.createElementNS(SVG_NS, "text");
+      const el2 = document.createElementNS(SVG_NS2, "text");
       applyCommon(el2, node);
       el2.textContent = node.text ?? "";
       return el2;
     }
-    const el = document.createElementNS(SVG_NS, node.type);
+    const el = document.createElementNS(SVG_NS2, node.type);
     applyCommon(el, node);
     if (node.label) {
-      const wrap = document.createElementNS(SVG_NS, "g");
+      const wrap = document.createElementNS(SVG_NS2, "g");
       wrap.setAttribute("data-id", node.id);
       wrap.setAttribute("data-wrapper", "label");
       const tstr = transformToString(node.transform);
@@ -535,13 +651,13 @@
     return el;
   }
   function labelElement(ownerNode, bbox) {
-    const t = document.createElementNS(SVG_NS, "text");
+    const t = document.createElementNS(SVG_NS2, "text");
     t.setAttribute("data-role", "label");
     t.setAttribute("data-owner", ownerNode.id);
     const cx = bbox.x + bbox.width / 2;
     const cy = bbox.y + bbox.height / 2;
-    t.setAttribute("x", round2(cx));
-    t.setAttribute("y", round2(cy));
+    t.setAttribute("x", round3(cx));
+    t.setAttribute("y", round3(cy));
     t.setAttribute("text-anchor", "middle");
     t.setAttribute("dominant-baseline", "middle");
     t.setAttribute("font-family", ownerNode.labelStyle?.["font-family"] || "sans-serif");
@@ -609,27 +725,32 @@
     for (const [k, v] of Object.entries(node.attrs)) {
       if (v === void 0 || v === null || v === "") continue;
       if (k === "d" && derivedD !== null) continue;
+      if ((k === "fill" || k === "stroke") && paintRef(node, k)) continue;
       el.setAttribute(k, formatAttr(k, v));
     }
     if (derivedD !== null) el.setAttribute("d", derivedD);
+    for (const slot of PAINT_SLOTS) {
+      const ref = paintRef(node, slot);
+      if (ref) el.setAttribute(slot, ref);
+    }
     const t = transformToString(node.transform);
     if (t) el.setAttribute("transform", t);
   }
   function formatAttr(k, v) {
     if (k === "points" && Array.isArray(v)) {
-      return v.map((p) => `${round2(p[0])},${round2(p[1])}`).join(" ");
+      return v.map((p) => `${round3(p[0])},${round3(p[1])}`).join(" ");
     }
-    if (typeof v === "number") return round2(v);
+    if (typeof v === "number") return round3(v);
     return String(v);
   }
   function transformToString(t) {
     if (!t) return "";
     const parts = [];
-    if (t.tx || t.ty) parts.push(`translate(${round2(t.tx)},${round2(t.ty)})`);
-    if (t.rot) parts.push(`rotate(${round2(t.rot)},${round2(t.cx)},${round2(t.cy)})`);
+    if (t.tx || t.ty) parts.push(`translate(${round3(t.tx)},${round3(t.ty)})`);
+    if (t.rot) parts.push(`rotate(${round3(t.rot)},${round3(t.cx)},${round3(t.cy)})`);
     return parts.join(" ");
   }
-  function round2(n) {
+  function round3(n) {
     if (typeof n !== "number") return n;
     return Math.abs(n) < 1e-9 ? 0 : Math.round(n * 1e3) / 1e3;
   }
@@ -664,7 +785,7 @@
   var WAYPOINT_MIN_SEG = 12;
   function drawConnectorSelection(id, el) {
     const isPolyline = el.tagName.toLowerCase() === "polyline";
-    const overlay = document.createElementNS(SVG_NS, isPolyline ? "polyline" : "line");
+    const overlay = document.createElementNS(SVG_NS2, isPolyline ? "polyline" : "line");
     overlay.setAttribute("class", "connector-selected");
     if (isPolyline) {
       overlay.setAttribute("points", el.getAttribute("points"));
@@ -685,7 +806,7 @@
     const wps = Array.isArray(node.waypoints) ? node.waypoints : [];
     wps.forEach((w, i) => {
       if (!w || !isFinite(w.x) || !isFinite(w.y)) return;
-      const h = document.createElementNS(SVG_NS, "rect");
+      const h = document.createElementNS(SVG_NS2, "rect");
       h.setAttribute("class", "waypoint-handle");
       h.setAttribute("data-role", "waypoint");
       h.setAttribute("data-id", id);
@@ -704,7 +825,7 @@
       if (Math.hypot(x2 - x1, y2 - y1) < WAYPOINT_MIN_SEG) continue;
       const mx = (x1 + x2) / 2;
       const my = (y1 + y2) / 2;
-      const c = document.createElementNS(SVG_NS, "circle");
+      const c = document.createElementNS(SVG_NS2, "circle");
       c.setAttribute("class", "waypoint-add-handle");
       c.setAttribute("data-role", "waypoint-add");
       c.setAttribute("data-id", id);
@@ -716,13 +837,13 @@
     }
   }
   function drawPathSelection({ id, el }, node) {
-    const wrap = document.createElementNS(SVG_NS, "g");
+    const wrap = document.createElementNS(SVG_NS2, "g");
     wrap.setAttribute("data-role", "path-edit");
     wrap.setAttribute("data-id", id);
     const t = el.getAttribute("transform");
     if (t) wrap.setAttribute("transform", t);
     chromeSelection.appendChild(wrap);
-    const outline = document.createElementNS(SVG_NS, "path");
+    const outline = document.createElementNS(SVG_NS2, "path");
     outline.setAttribute("class", "connector-selected");
     outline.setAttribute("d", el.getAttribute("d") || "");
     outline.setAttribute("fill", "none");
@@ -735,14 +856,14 @@
       for (const which of ["cin", "cout"]) {
         const c = a[which];
         if (!c || !isFinite(c.x) || !isFinite(c.y)) continue;
-        const line = document.createElementNS(SVG_NS, "line");
+        const line = document.createElementNS(SVG_NS2, "line");
         line.setAttribute("class", "path-ctrl-line");
         line.setAttribute("x1", a.x);
         line.setAttribute("y1", a.y);
         line.setAttribute("x2", c.x);
         line.setAttribute("y2", c.y);
         wrap.appendChild(line);
-        const dot = document.createElementNS(SVG_NS, "circle");
+        const dot = document.createElementNS(SVG_NS2, "circle");
         dot.setAttribute("class", "path-ctrl-handle");
         dot.setAttribute("data-role", "path-handle");
         dot.setAttribute("data-id", id);
@@ -756,7 +877,7 @@
     });
     anchors.forEach((a, i) => {
       if (!a || !isFinite(a.x) || !isFinite(a.y)) return;
-      const h = document.createElementNS(SVG_NS, "rect");
+      const h = document.createElementNS(SVG_NS2, "rect");
       h.setAttribute("class", "path-anchor-handle");
       h.setAttribute("data-role", "path-anchor");
       h.setAttribute("data-id", id);
@@ -769,12 +890,12 @@
     });
   }
   function drawSingleSelectionChrome({ id, el, box }) {
-    const wrap = document.createElementNS(SVG_NS, "g");
+    const wrap = document.createElementNS(SVG_NS2, "g");
     wrap.setAttribute("data-role", "selection");
     wrap.setAttribute("data-id", id);
     const t = el.getAttribute("transform");
     if (t) wrap.setAttribute("transform", t);
-    const outline = document.createElementNS(SVG_NS, "rect");
+    const outline = document.createElementNS(SVG_NS2, "rect");
     outline.setAttribute("class", "selection-outline");
     outline.setAttribute("x", box.x);
     outline.setAttribute("y", box.y);
@@ -796,7 +917,7 @@
       ["w", box.x, cy]
     ];
     for (const [dir, px, py] of positions) {
-      const h = document.createElementNS(SVG_NS, "rect");
+      const h = document.createElementNS(SVG_NS2, "rect");
       h.setAttribute("class", `handle ${dir}`);
       h.setAttribute("data-role", "resize");
       h.setAttribute("data-handle", dir);
@@ -808,14 +929,14 @@
       wrap.appendChild(h);
     }
     const rotY = box.y - ROT_STEM_LEN * scale;
-    const stem = document.createElementNS(SVG_NS, "line");
+    const stem = document.createElementNS(SVG_NS2, "line");
     stem.setAttribute("class", "rot-stem");
     stem.setAttribute("x1", cx);
     stem.setAttribute("y1", box.y);
     stem.setAttribute("x2", cx);
     stem.setAttribute("y2", rotY);
     wrap.appendChild(stem);
-    const rot = document.createElementNS(SVG_NS, "circle");
+    const rot = document.createElementNS(SVG_NS2, "circle");
     rot.setAttribute("class", "rot-handle");
     rot.setAttribute("data-role", "rotate");
     rot.setAttribute("data-id", id);
@@ -843,11 +964,11 @@
       }
     }
     if (!isFinite(minX)) return;
-    const wrap = document.createElementNS(SVG_NS, "g");
+    const wrap = document.createElementNS(SVG_NS2, "g");
     wrap.setAttribute("data-role", "selection-multi");
     const w = maxX - minX;
     const h = maxY - minY;
-    const outline = document.createElementNS(SVG_NS, "rect");
+    const outline = document.createElementNS(SVG_NS2, "rect");
     outline.setAttribute("class", "selection-outline");
     outline.setAttribute("x", minX);
     outline.setAttribute("y", minY);
@@ -868,7 +989,7 @@
       ["w", minX, cy]
     ];
     for (const [dir, px, py] of positions) {
-      const hnd = document.createElementNS(SVG_NS, "rect");
+      const hnd = document.createElementNS(SVG_NS2, "rect");
       hnd.setAttribute("class", `handle ${dir}`);
       hnd.setAttribute("data-role", "resize-multi");
       hnd.setAttribute("data-handle", dir);
@@ -1016,7 +1137,7 @@
   }
 
   // js/guides.js
-  var SVG_NS2 = "http://www.w3.org/2000/svg";
+  var SVG_NS3 = "http://www.w3.org/2000/svg";
   var CLASS = "align-guide";
   var TICK_CLASS = "align-tick";
   var TICK_HALF = 4;
@@ -1131,7 +1252,7 @@
     clearGuides();
     const layer = getTransientLayer();
     for (const g of guides) {
-      const line = document.createElementNS(SVG_NS2, "line");
+      const line = document.createElementNS(SVG_NS3, "line");
       line.setAttribute("class", `${CLASS} ${g.kind === "center" ? "center" : "edge"}`);
       if (g.orient === "v") {
         line.setAttribute("x1", g.x);
@@ -1151,14 +1272,14 @@
     }
   }
   function centerTick(cx, cy) {
-    const g = document.createElementNS(SVG_NS2, "g");
+    const g = document.createElementNS(SVG_NS3, "g");
     g.setAttribute("class", TICK_CLASS);
-    const h = document.createElementNS(SVG_NS2, "line");
+    const h = document.createElementNS(SVG_NS3, "line");
     h.setAttribute("x1", cx - TICK_HALF);
     h.setAttribute("y1", cy);
     h.setAttribute("x2", cx + TICK_HALF);
     h.setAttribute("y2", cy);
-    const v = document.createElementNS(SVG_NS2, "line");
+    const v = document.createElementNS(SVG_NS3, "line");
     v.setAttribute("x1", cx);
     v.setAttribute("y1", cy - TICK_HALF);
     v.setAttribute("x2", cx);
@@ -1276,8 +1397,9 @@
   var CANVAS_BBOX = { x: 0, y: 0, width: 1e3, height: 700 };
   var SNAP_THRESHOLD = 6;
   var DRAG_THRESHOLD = 3;
+  var ROUND_RECT_RADIUS = 16;
   var hoveredId = null;
-  var SVG_NS3 = "http://www.w3.org/2000/svg";
+  var SVG_NS4 = "http://www.w3.org/2000/svg";
   var DEFAULT_STYLE = {
     fill: "#88ccee",
     stroke: "#222222",
@@ -1668,7 +1790,7 @@
   }
   function startMarquee(p) {
     gesture = { type: "marquee", origin: p, last: p, moved: false };
-    const rect = document.createElementNS(SVG_NS3, "rect");
+    const rect = document.createElementNS(SVG_NS4, "rect");
     rect.setAttribute("class", "marquee");
     rect.setAttribute("x", p.x);
     rect.setAttribute("y", p.y);
@@ -1725,8 +1847,12 @@
     gesture = { type: "draw", origin: p, last: p, moved: false, id, tool: currentTool };
   }
   function seedNodeFor(tool, id, p) {
-    const base = { id, type: tool, transform: emptyTransform() };
+    const type = tool === "roundrect" ? "rect" : tool;
+    const base = { id, type, transform: emptyTransform() };
     const style = tool === "line" ? { ...LINE_STYLE } : { ...DEFAULT_STYLE };
+    if (tool === "roundrect") {
+      return { ...base, attrs: { x: p.x, y: p.y, width: 0, height: 0, rx: ROUND_RECT_RADIUS, ry: ROUND_RECT_RADIUS, ...style } };
+    }
     if (tool === "rect") {
       return { ...base, attrs: { x: p.x, y: p.y, width: 0, height: 0, rx: 0, ry: 0, ...style } };
     }
@@ -1746,7 +1872,7 @@
     if (isSnap() && !e.altKey) p = snapPoint(p.x, p.y);
     let dx = p.x - origin.x;
     let dy = p.y - origin.y;
-    if (e.shiftKey && (tool === "rect" || tool === "ellipse" || tool === "circle")) {
+    if (e.shiftKey && (tool === "rect" || tool === "roundrect" || tool === "ellipse" || tool === "circle")) {
       const s = Math.max(Math.abs(dx), Math.abs(dy));
       dx = Math.sign(dx || 1) * s;
       dy = Math.sign(dy || 1) * s;
@@ -1754,7 +1880,7 @@
     mutate((root) => {
       const n = findNode(root, id);
       if (!n) return;
-      if (tool === "rect") {
+      if (tool === "rect" || tool === "roundrect") {
         n.attrs.x = Math.min(origin.x, origin.x + dx);
         n.attrs.y = Math.min(origin.y, origin.y + dy);
         n.attrs.width = Math.abs(dx);
@@ -1804,7 +1930,7 @@
     setSelection([id]);
   }
   function isEmptyShape(node, tool) {
-    if (tool === "rect") return !(node.attrs.width > 0 && node.attrs.height > 0);
+    if (tool === "rect" || tool === "roundrect") return !(node.attrs.width > 0 && node.attrs.height > 0);
     if (tool === "ellipse") return !(node.attrs.rx > 0 && node.attrs.ry > 0);
     if (tool === "circle") return !(node.attrs.r > 0);
     if (tool === "line") return node.attrs.x1 === node.attrs.x2 && node.attrs.y1 === node.attrs.y2;
@@ -1823,7 +1949,7 @@
       fromAnchor: fromId ? anchorOfShape(fromId) : { x: p.x, y: p.y },
       toId: null
     };
-    const line = document.createElementNS(SVG_NS3, "line");
+    const line = document.createElementNS(SVG_NS4, "line");
     line.setAttribute("class", "connector-preview");
     gesture.previewEl = line;
     getTransientLayer().appendChild(line);
@@ -1966,7 +2092,7 @@
   function ensurePolylinePreview() {
     if (!polylineInProgress) return;
     if (polylineInProgress.previewEl) return;
-    const line = document.createElementNS(SVG_NS3, "line");
+    const line = document.createElementNS(SVG_NS4, "line");
     line.setAttribute("class", "rubber");
     polylineInProgress.previewEl = line;
     getTransientLayer().appendChild(line);
@@ -2079,7 +2205,7 @@
   }
   function ensurePenPreview() {
     if (!penInProgress || penInProgress.previewEl) return;
-    const line = document.createElementNS(SVG_NS3, "line");
+    const line = document.createElementNS(SVG_NS4, "line");
     line.setAttribute("class", "rubber");
     penInProgress.previewEl = line;
     getTransientLayer().appendChild(line);
@@ -2087,7 +2213,7 @@
   function ensurePenCloseHint() {
     if (!penInProgress) return null;
     if (penInProgress.closeHintEl) return penInProgress.closeHintEl;
-    const c = document.createElementNS(SVG_NS3, "circle");
+    const c = document.createElementNS(SVG_NS4, "circle");
     c.setAttribute("class", "pen-close-hint");
     penInProgress.closeHintEl = c;
     getTransientLayer().appendChild(c);
@@ -3204,6 +3330,25 @@
 
   // js/ui.js
   var TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", n: "pen", t: "text", x: "connector" };
+  var FLYOUT_HOLD_MS = 250;
+  var TOOL_ICONS = {
+    rect: '<rect x="4" y="6" width="16" height="12" fill="none" stroke="currentColor" stroke-width="2"/>',
+    roundrect: '<rect x="4" y="6" width="16" height="12" rx="4" ry="4" fill="none" stroke="currentColor" stroke-width="2"/>',
+    ellipse: '<ellipse cx="12" cy="12" rx="9" ry="6" fill="none" stroke="currentColor" stroke-width="2"/>',
+    circle: '<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/>'
+  };
+  var TOOL_FLYOUTS = {
+    rect: [
+      { tool: "rect", title: "Rectangle (R)" },
+      { tool: "roundrect", title: "Rounded rectangle" }
+    ],
+    ellipse: [
+      { tool: "ellipse", title: "Ellipse (E) \u2014 hold Shift for a circle" },
+      { tool: "circle", title: "Circle (C) \u2014 hold Shift for a perfect circle" }
+    ]
+  };
+  var slotActiveTool = { rect: "rect", ellipse: "ellipse" };
+  var openFlyout = null;
   var propsEmpty;
   var propsForm;
   var pFill;
@@ -3230,6 +3375,11 @@
   var pathCornerRow;
   var pCornerRadius;
   var pCornerRadiusNum;
+  var pFillType;
+  var pStrokeType;
+  var fillNoneRow;
+  var strokeNoneRow;
+  var gradEditors = {};
   var clipboard = null;
   var gridApi = null;
   function mount5(root) {
@@ -3291,13 +3441,111 @@
   function wireToolbar(root) {
     const btns = root.querySelectorAll("#toolbar .tool");
     for (const b of btns) {
-      b.addEventListener("click", () => setTool(b.dataset.tool));
+      const slot = b.dataset.slot;
+      let openedByHold = false;
+      b.addEventListener("click", () => {
+        if (openedByHold) {
+          openedByHold = false;
+          return;
+        }
+        setTool(slot ? slotActiveTool[slot] : b.dataset.tool);
+      });
+      if (!slot) continue;
+      b.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        showFlyout(slot, b);
+      });
+      let holdTimer = null;
+      const clearHold = () => {
+        if (holdTimer) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+        }
+      };
+      b.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        clearHold();
+        holdTimer = setTimeout(() => {
+          holdTimer = null;
+          openedByHold = true;
+          showFlyout(slot, b);
+        }, FLYOUT_HOLD_MS);
+      });
+      b.addEventListener("pointerup", clearHold);
+      b.addEventListener("pointerleave", clearHold);
     }
+    document.addEventListener("pointerdown", (e) => {
+      if (openFlyout && !openFlyout.el.contains(e.target) && !(e.target.closest && e.target.closest(`.tool[data-slot="${openFlyout.slot}"]`))) {
+        closeFlyout();
+      }
+    }, true);
+    window.addEventListener("blur", closeFlyout);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeFlyout();
+    });
+  }
+  function showFlyout(slot, slotBtn) {
+    const variants = TOOL_FLYOUTS[slot];
+    if (!variants) return;
+    closeFlyout();
+    const fly = document.createElement("div");
+    fly.className = "tool-flyout";
+    for (const v of variants) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tool";
+      b.dataset.tool = v.tool;
+      b.title = v.title;
+      b.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20">${TOOL_ICONS[v.tool] || ""}</svg>`;
+      b.classList.toggle("active", getTool() === v.tool);
+      b.addEventListener("click", () => {
+        slotActiveTool[slot] = v.tool;
+        updateSlotIcon(slot, slotBtn);
+        setTool(v.tool);
+        closeFlyout();
+      });
+      fly.appendChild(b);
+    }
+    document.body.appendChild(fly);
+    const r3 = slotBtn.getBoundingClientRect();
+    fly.style.left = `${Math.round(r3.right + 6)}px`;
+    fly.style.top = `${Math.round(r3.top)}px`;
+    openFlyout = { slot, el: fly };
+  }
+  function closeFlyout() {
+    if (openFlyout) {
+      openFlyout.el.remove();
+      openFlyout = null;
+    }
+  }
+  function updateSlotIcon(slot, slotBtn) {
+    const tool = slotActiveTool[slot];
+    const svg3 = slotBtn.querySelector("svg");
+    if (svg3 && TOOL_ICONS[tool]) svg3.innerHTML = TOOL_ICONS[tool];
+    const variant = (TOOL_FLYOUTS[slot] || []).find((v) => v.tool === tool);
+    if (variant) slotBtn.title = variant.title;
+    slotBtn.dataset.tool = tool;
   }
   function reflectToolInUI(tool) {
     document.querySelectorAll("#toolbar .tool").forEach((b) => {
-      b.classList.toggle("active", b.dataset.tool === tool);
+      const slot = b.dataset.slot;
+      if (slot) {
+        const variants = (TOOL_FLYOUTS[slot] || []).map((v) => v.tool);
+        const owns = variants.includes(tool);
+        if (owns && slotActiveTool[slot] !== tool) {
+          slotActiveTool[slot] = tool;
+          updateSlotIcon(slot, b);
+        }
+        b.classList.toggle("active", owns);
+      } else {
+        b.classList.toggle("active", b.dataset.tool === tool);
+      }
     });
+    if (openFlyout) {
+      openFlyout.el.querySelectorAll(".tool").forEach((b) => {
+        b.classList.toggle("active", b.dataset.tool === tool);
+      });
+    }
   }
   function wireProperties(root) {
     propsEmpty = root.querySelector("#props-empty");
@@ -3326,6 +3574,11 @@
     pathCornerRow = root.querySelector("#path-corner-row");
     pCornerRadius = root.querySelector("#p-corner-radius");
     pCornerRadiusNum = root.querySelector("#p-corner-radius-num");
+    pFillType = root.querySelector("#p-fill-type");
+    pStrokeType = root.querySelector("#p-stroke-type");
+    fillNoneRow = root.querySelector("#fill-none-row");
+    strokeNoneRow = root.querySelector("#stroke-none-row");
+    wireGradientEditors(root);
     pFill.addEventListener("input", () => applyToSelection("fill", pFill.value));
     pFill.addEventListener("change", () => historyCommitAfter(() => applyToSelection("fill", pFill.value)));
     pFillNone.addEventListener("change", () => historyRecord(() => applyToSelection("fill", pFillNone.checked ? "none" : pFill.value)));
@@ -3356,6 +3609,8 @@
       pOpacity.value = v;
       historyCommitAfter(() => applyToSelection("opacity", v));
     });
+    pFillType.addEventListener("change", () => historyRecord(() => applyPaintType("fill", pFillType.value)));
+    pStrokeType.addEventListener("change", () => historyRecord(() => applyPaintType("stroke", pStrokeType.value)));
     for (const input of [pFill, pStroke, pStrokeWidth, pOpacity, pTextColor]) {
       input.addEventListener("pointerdown", () => beginTransaction());
     }
@@ -3577,6 +3832,217 @@
       }
     });
   }
+  function wireGradientEditors(root) {
+    for (const slot of ["fill", "stroke"]) {
+      const rootEl = root.querySelector(`#${slot}-gradient`);
+      if (!rootEl) continue;
+      const ed = {
+        root: rootEl,
+        preview: rootEl.querySelector(".grad-preview"),
+        angle: rootEl.querySelector(".grad-angle"),
+        angleNum: rootEl.querySelector(".grad-angle-num"),
+        stops: rootEl.querySelector(".grad-stops"),
+        add: rootEl.querySelector(".grad-add")
+      };
+      gradEditors[slot] = ed;
+      ed.angle.addEventListener("pointerdown", () => beginTransaction());
+      ed.angle.addEventListener("input", () => {
+        ed.angleNum.value = ed.angle.value;
+        ensureTransaction();
+        updateGradient(slot, (g) => {
+          g.angle = Number(ed.angle.value);
+        });
+      });
+      ed.angle.addEventListener("change", () => historyCommitAfter(() => updateGradient(slot, (g) => {
+        g.angle = Number(ed.angle.value);
+      })));
+      ed.angleNum.addEventListener("input", () => {
+        const v = clampAngle(ed.angleNum.value);
+        if (v === null) return;
+        ensureTransaction();
+        ed.angle.value = v;
+        updateGradient(slot, (g) => {
+          g.angle = v;
+        });
+      });
+      ed.angleNum.addEventListener("change", () => {
+        const v = clampAngle(ed.angleNum.value);
+        if (v === null) {
+          refreshPropertyPanel();
+          return;
+        }
+        ed.angleNum.value = v;
+        ed.angle.value = v;
+        historyCommitAfter(() => updateGradient(slot, (g) => {
+          g.angle = v;
+        }));
+      });
+      ed.add.addEventListener("click", () => historyRecord(() => addStop(slot)));
+      ed.stops.addEventListener("pointerdown", (e) => {
+        if (e.target.matches(".grad-stop-color, .grad-stop-offset")) beginTransaction();
+      });
+      ed.stops.addEventListener("input", (e) => {
+        const row = e.target.closest(".grad-stop");
+        if (!row) return;
+        const i = Number(row.dataset.index);
+        ensureTransaction();
+        if (e.target.matches(".grad-stop-color")) {
+          updateGradient(slot, (g) => {
+            if (g.stops[i]) g.stops[i].color = e.target.value;
+          });
+        } else if (e.target.matches(".grad-stop-offset")) {
+          updateGradient(slot, (g) => {
+            if (g.stops[i]) g.stops[i].offset = Number(e.target.value) / 100;
+          });
+        }
+      });
+      ed.stops.addEventListener("change", (e) => {
+        if (e.target.matches(".grad-stop-color, .grad-stop-offset")) commit("gradient stop");
+      });
+      ed.stops.addEventListener("click", (e) => {
+        const del = e.target.closest(".grad-stop-del");
+        if (!del || del.disabled) return;
+        const row = e.target.closest(".grad-stop");
+        if (row) historyRecord(() => removeStop(slot, Number(row.dataset.index)));
+      });
+    }
+  }
+  function applyPaintType(slot, type) {
+    const ids = [...getSelection()];
+    if (ids.length === 0) return;
+    const seed = slot === "fill" ? pFill.value : pStroke.value;
+    mutate((root) => {
+      for (const id of ids) {
+        for (const n of shapeTargets(root, id)) {
+          if (type === "linear") {
+            const existing = getGradient(n, slot);
+            if (!existing) {
+              if (!n.gradients) n.gradients = {};
+              n.gradients[slot] = defaultLinearGradient(n.attrs[slot] || seed);
+            }
+          } else {
+            const g = getGradient(n, slot);
+            if (g) n.attrs[slot] = g.stops[0]?.color || n.attrs[slot] || seed;
+            if (n.gradients) {
+              delete n.gradients[slot];
+              if (!Object.keys(n.gradients).length) delete n.gradients;
+            }
+          }
+        }
+      }
+    });
+  }
+  function updateGradient(slot, fn) {
+    const ids = [...getSelection()];
+    if (ids.length === 0) return;
+    mutate((root) => {
+      for (const id of ids) {
+        for (const n of shapeTargets(root, id)) {
+          const g = getGradient(n, slot);
+          if (g) fn(g);
+        }
+      }
+    });
+  }
+  function addStop(slot) {
+    updateGradient(slot, (g) => {
+      const stops = g.stops.slice().sort((a, b) => a.offset - b.offset);
+      let gap = -1, at = 0.5, lo = stops[0], hi = stops[stops.length - 1];
+      for (let i = 0; i < stops.length - 1; i++) {
+        const d = stops[i + 1].offset - stops[i].offset;
+        if (d > gap) {
+          gap = d;
+          at = (stops[i].offset + stops[i + 1].offset) / 2;
+          lo = stops[i];
+          hi = stops[i + 1];
+        }
+      }
+      g.stops.push({ offset: at, color: mixHex(lo.color, hi.color, 0.5), opacity: 1 });
+      g.stops.sort((a, b) => a.offset - b.offset);
+    });
+  }
+  function removeStop(slot, index) {
+    updateGradient(slot, (g) => {
+      if (g.stops.length <= 2) return;
+      g.stops.splice(index, 1);
+    });
+  }
+  function shapeTargets(root, id) {
+    const n = findNode(root, id);
+    if (!n) return [];
+    if (n.type === "group") {
+      const out = [];
+      walk(n, (node) => {
+        if (node.type !== "group") out.push(node);
+      });
+      return out;
+    }
+    return [n];
+  }
+  function clampAngle(raw) {
+    if (raw === "" || raw === null || raw === void 0) return null;
+    let n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    return (Math.round(n) % 360 + 360) % 360;
+  }
+  function mixHex(a, b, t) {
+    const pa = hexToRgb(a), pb = hexToRgb(b);
+    if (!pa || !pb) return pa ? a : pb ? b : "#808080";
+    const m = (x, y) => Math.round(x + (y - x) * t);
+    return rgbToHex(m(pa[0], pb[0]), m(pa[1], pb[1]), m(pa[2], pb[2]));
+  }
+  function hexToRgb(v) {
+    const s = normalizeColor(v, null);
+    if (!s) return null;
+    return [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5, 7), 16)];
+  }
+  function rgbToHex(r3, g, b) {
+    const h = (n) => n.toString(16).padStart(2, "0");
+    return "#" + h(r3) + h(g) + h(b);
+  }
+  function syncGradientEditor(slot, def) {
+    const ed = gradEditors[slot];
+    if (!ed) return;
+    const active = isValidGradient(def);
+    ed.root.hidden = !active;
+    if (!active) return;
+    const focus = document.activeElement;
+    const editingAngle = focus === ed.angle || focus === ed.angleNum;
+    const editingStop = ed.stops.contains(focus) && (focus.classList.contains("grad-stop-offset") || focus.classList.contains("grad-stop-color"));
+    if (!editingAngle) {
+      ed.angle.value = def.angle;
+      ed.angleNum.value = def.angle;
+    }
+    const stopsCss = def.stops.slice().sort((a, b) => a.offset - b.offset).map((s) => `${s.color} ${Math.round(s.offset * 100)}%`).join(", ");
+    ed.preview.style.background = `linear-gradient(${def.angle}deg, ${stopsCss})`;
+    if (editingStop) return;
+    ed.stops.innerHTML = "";
+    const canDelete = def.stops.length > 2;
+    def.stops.forEach((s, i) => {
+      const row = document.createElement("div");
+      row.className = "grad-stop";
+      row.dataset.index = i;
+      const color = document.createElement("input");
+      color.type = "color";
+      color.className = "grad-stop-color";
+      color.value = normalizeColor(s.color, "#000000");
+      const offset = document.createElement("input");
+      offset.type = "range";
+      offset.className = "grad-stop-offset";
+      offset.min = 0;
+      offset.max = 100;
+      offset.step = 1;
+      offset.value = Math.round((s.offset ?? 0) * 100);
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "grad-stop-del";
+      del.textContent = "\xD7";
+      del.title = "Delete stop";
+      del.disabled = !canDelete;
+      row.append(color, offset, del);
+      ed.stops.appendChild(row);
+    });
+  }
   function refreshPropertyPanel() {
     const ids = [...getSelection()];
     if (ids.length === 0) {
@@ -3633,6 +4099,14 @@
     const stroke = sample.attrs.stroke ?? "#000000";
     const sw = sample.attrs["stroke-width"] ?? 1;
     const op = sample.attrs.opacity ?? 1;
+    const fillGrad = getGradient(sample, "fill");
+    const strokeGrad = getGradient(sample, "stroke");
+    pFillType.value = fillGrad ? "linear" : "solid";
+    pStrokeType.value = strokeGrad ? "linear" : "solid";
+    if (fillNoneRow) fillNoneRow.hidden = !!fillGrad;
+    if (strokeNoneRow) strokeNoneRow.hidden = !!strokeGrad;
+    syncGradientEditor("fill", fillGrad);
+    syncGradientEditor("stroke", strokeGrad);
     pFillNone.checked = fill === "none";
     pFill.value = normalizeColor(fill, "#88ccee");
     pStrokeNone.checked = stroke === "none";
@@ -4022,22 +4496,23 @@
   function serialize() {
     const doc2 = getDoc();
     const vb2 = tightMode ? computeTightViewBox() : DEFAULT_VIEWBOX;
-    const vbStr = `${round3(vb2.x)} ${round3(vb2.y)} ${round3(vb2.width)} ${round3(vb2.height)}`;
+    const vbStr = `${round4(vb2.x)} ${round4(vb2.y)} ${round4(vb2.width)} ${round4(vb2.height)}`;
     const lines = [
       `<?xml version="1.0" encoding="UTF-8"?>`,
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbStr}">`
     ];
-    lines.push(...arrowDefs(doc2));
+    lines.push(...defsBlock(doc2));
     for (const child of doc2.children) {
       lines.push(...emitNode(child, 1));
     }
     lines.push(`</svg>`);
     return lines.join("\n") + "\n";
   }
-  function arrowDefs(doc2) {
+  function defsBlock(doc2) {
     const needsEnd = doc2.children.some((c) => c.type === "connector" && c.arrowEnd);
     const needsStart = doc2.children.some((c) => c.type === "connector" && c.arrowStart);
-    if (!needsEnd && !needsStart) return [];
+    const gradients = collectGradients(doc2);
+    if (!needsEnd && !needsStart && !gradients.length) return [];
     const out = [`${INDENT}<defs>`];
     const marker = (id) => [
       `${INDENT}${INDENT}<marker id="${id}" markerWidth="12" markerHeight="12" refX="9" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse">`,
@@ -4046,6 +4521,9 @@
     ];
     if (needsEnd) out.push(...marker("arrow-end"));
     if (needsStart) out.push(...marker("arrow-start"));
+    for (const g of gradients) {
+      out.push(...linearGradientMarkup(g.def, g.id, INDENT + INDENT, INDENT));
+    }
     out.push(`${INDENT}</defs>`);
     return out;
   }
@@ -4082,11 +4560,11 @@
       if (!g || !g.valid) return [];
       const orthogonal = Array.isArray(g.points);
       const tag = orthogonal ? "polyline" : "line";
-      const parts = orthogonal ? [`points="${g.points.map(([x, y]) => `${round3(x)},${round3(y)}`).join(" ")}"`, `fill="none"`] : [
-        `x1="${round3(g.x1)}"`,
-        `y1="${round3(g.y1)}"`,
-        `x2="${round3(g.x2)}"`,
-        `y2="${round3(g.y2)}"`
+      const parts = orthogonal ? [`points="${g.points.map(([x, y]) => `${round4(x)},${round4(y)}`).join(" ")}"`, `fill="none"`] : [
+        `x1="${round4(g.x1)}"`,
+        `y1="${round4(g.y1)}"`,
+        `x2="${round4(g.x2)}"`,
+        `y2="${round4(g.y2)}"`
       ];
       for (const k of PRESENTATION_ATTRS) {
         if (!(k in (node.attrs || {}))) continue;
@@ -4103,12 +4581,12 @@
         if (mid) {
           const style = node.labelStyle || {};
           const lp = [
-            `x="${round3(mid.x)}"`,
-            `y="${round3(mid.y)}"`,
+            `x="${round4(mid.x)}"`,
+            `y="${round4(mid.y)}"`,
             `text-anchor="middle"`,
             `dominant-baseline="middle"`,
             `font-family="${escapeXml(String(style["font-family"] || "sans-serif"))}"`,
-            `font-size="${round3(style["font-size"] || 16)}"`,
+            `font-size="${round4(style["font-size"] || 16)}"`,
             `fill="${escapeXml(String(style.fill || "#000000"))}"`,
             `stroke="#ffffff"`,
             `stroke-width="3"`,
@@ -4246,6 +4724,13 @@
       emit2(k, v);
     }
     for (const k of PRESENTATION_ATTRS) {
+      if (k === "fill" || k === "stroke") {
+        const ref = paintRef(node, k);
+        if (ref) {
+          emit2(k, ref);
+          continue;
+        }
+      }
       if (!(k in node.attrs)) continue;
       const v = node.attrs[k];
       if (isDefault(k, v)) continue;
@@ -4267,12 +4752,12 @@
   }
   function formatValue(k, v) {
     if (k === "points" && Array.isArray(v)) {
-      return v.map((p) => `${round3(p[0])},${round3(p[1])}`).join(" ");
+      return v.map((p) => `${round4(p[0])},${round4(p[1])}`).join(" ");
     }
-    if (typeof v === "number") return String(round3(v));
+    if (typeof v === "number") return String(round4(v));
     return escapeXml(String(v));
   }
-  function round3(n) {
+  function round4(n) {
     if (typeof n !== "number") return n;
     if (Math.abs(n) < 1e-9) return 0;
     return Math.round(n * 1e3) / 1e3;
@@ -4283,8 +4768,8 @@
   function transformString(t) {
     if (!t) return "";
     const parts = [];
-    if (t.tx || t.ty) parts.push(`translate(${round3(t.tx)},${round3(t.ty)})`);
-    if (t.rot) parts.push(`rotate(${round3(t.rot)},${round3(t.cx)},${round3(t.cy)})`);
+    if (t.tx || t.ty) parts.push(`translate(${round4(t.tx)},${round4(t.ty)})`);
+    if (t.rot) parts.push(`rotate(${round4(t.rot)},${round4(t.cx)},${round4(t.cy)})`);
     return parts.join(" ");
   }
   var sourcePanel;
@@ -4354,8 +4839,8 @@
   var SUPPORTED_SHAPES = /* @__PURE__ */ new Set(["rect", "circle", "ellipse", "line", "polyline", "text", "path"]);
   var SUPPORTED_CONTAINERS = /* @__PURE__ */ new Set(["g"]);
   var IGNORABLE = /* @__PURE__ */ new Set(["title", "desc", "metadata", "style", "defs"]);
+  var COLLECTED_ELEMENTS = /* @__PURE__ */ new Set(["linearGradient"]);
   var PAINT_SERVER_ELEMENTS = /* @__PURE__ */ new Set([
-    "linearGradient",
     "radialGradient",
     "pattern",
     "filter",
@@ -4411,7 +4896,8 @@
     if (!root || root.localName !== "svg") {
       throw new ImportError(`Root element must be <svg> (got <${root?.localName || "empty"}>)`);
     }
-    preflightRejectPaintServers(root);
+    const gradients = collectLinearGradients(root);
+    preflightRejectPaintServers(root, gradients);
     inlineStyleClasses(root);
     const nodes = [];
     for (const child of Array.from(root.children)) {
@@ -4419,36 +4905,145 @@
       if (parsed) nodes.push(parsed);
     }
     if (nodes.length === 0) throw new ImportError("No supported elements found");
+    for (const n of nodes) resolveGradientRefs(n, gradients);
     return nodes;
   }
-  function preflightRejectPaintServers(root) {
+  function preflightRejectPaintServers(root, gradients) {
+    const resolves = (v) => {
+      const id = paintRefId(v);
+      return id != null && gradients.has(id);
+    };
     const stack = [root];
     while (stack.length) {
       const el = stack.pop();
       for (const child of Array.from(el.children)) {
         const name = child.localName;
+        if (COLLECTED_ELEMENTS.has(name)) continue;
         if (PAINT_SERVER_ELEMENTS.has(name)) {
           throw new ImportError(
-            `<${name}> is not supported \u2014 gradients, patterns, filters, clip paths, masks, <use>, and <image> can't be represented in this editor's model.`
+            `<${name}> is not supported \u2014 radial gradients, patterns, filters, clip paths, masks, <use>, and <image> can't be represented in this editor's model.`
           );
         }
         for (const key of ["fill", "stroke"]) {
           const v = child.getAttribute(key);
-          if (v && /url\s*\(/i.test(v)) {
+          if (v && /url\s*\(/i.test(v) && !resolves(v)) {
             throw new ImportError(
-              `${key}="${v}" references a paint server (gradient/pattern) \u2014 not supported.`
+              `${key}="${v}" references an unsupported paint server (only linear gradients are supported).`
             );
           }
         }
         const style = child.getAttribute("style");
         if (style && /url\s*\(/i.test(style)) {
-          throw new ImportError(
-            `style="${style.slice(0, 80)}..." references a paint server (gradient/pattern) \u2014 not supported.`
-          );
+          const refs = style.match(/url\s*\([^)]*\)/gi) || [];
+          if (!refs.every(resolves)) {
+            throw new ImportError(
+              `style="${style.slice(0, 80)}..." references an unsupported paint server (only linear gradients are supported).`
+            );
+          }
         }
         stack.push(child);
       }
     }
+  }
+  function paintRefId(v) {
+    if (typeof v !== "string") return null;
+    const m = /url\s*\(\s*['"]?#([^'")\s]+)['"]?\s*\)/i.exec(v);
+    return m ? m[1] : null;
+  }
+  function collectLinearGradients(root) {
+    const byId = /* @__PURE__ */ new Map();
+    const els = root.getElementsByTagName("linearGradient");
+    for (const el of Array.from(els)) {
+      const id = el.getAttribute("id");
+      if (id) byId.set(id, el);
+    }
+    const out = /* @__PURE__ */ new Map();
+    for (const [id, el] of byId) {
+      const def = linearGradientToDef(el, byId);
+      if (def) out.set(id, def);
+    }
+    return out;
+  }
+  function linearGradientToDef(el, byId) {
+    let stopHost = el;
+    let stops = readStops(el);
+    if (stops.length === 0) {
+      const href = el.getAttribute("href") || el.getAttribute("xlink:href");
+      const refId = href && href.startsWith("#") ? href.slice(1) : null;
+      if (refId && byId.has(refId)) {
+        stopHost = byId.get(refId);
+        stops = readStops(stopHost);
+      }
+    }
+    if (stops.length < 2) return null;
+    return { type: "linear", angle: linearGradientAngle(el), stops };
+  }
+  function readStops(el) {
+    const out = [];
+    for (const s of Array.from(el.children)) {
+      if (s.localName !== "stop") continue;
+      let offset = parseFloat(s.getAttribute("offset"));
+      if (!Number.isFinite(offset)) offset = 0;
+      if (String(s.getAttribute("offset")).includes("%")) offset /= 100;
+      if (offset > 1) offset /= 100;
+      const style = parseInlineStyle(s.getAttribute("style"));
+      const color = s.getAttribute("stop-color") || style["stop-color"] || "#000000";
+      const opRaw = s.getAttribute("stop-opacity") || style["stop-opacity"];
+      const opacity = opRaw != null && opRaw !== "" ? clamp012(parseFloat(opRaw)) : 1;
+      out.push({ offset: clamp012(offset), color, opacity: Number.isFinite(opacity) ? opacity : 1 });
+    }
+    return out;
+  }
+  function linearGradientAngle(el) {
+    const num2 = (k, d) => {
+      const raw = el.getAttribute(k);
+      if (raw == null) return d;
+      let n = parseFloat(raw);
+      if (!Number.isFinite(n)) return d;
+      if (String(raw).includes("%")) n /= 100;
+      return n;
+    };
+    const x1 = num2("x1", 0), y1 = num2("y1", 0), x2 = num2("x2", 1), y2 = num2("y2", 0);
+    let base = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+    const gt = el.getAttribute("gradientTransform");
+    if (gt) {
+      const m = /rotate\s*\(\s*(-?[\d.]+)/.exec(gt);
+      if (m) base += parseFloat(m[1]);
+    }
+    return (Math.round(base) % 360 + 360) % 360;
+  }
+  function resolveGradientRefs(node, gradients) {
+    if (!node || typeof node !== "object") return;
+    if (node.attrs) {
+      for (const slot of ["fill", "stroke"]) {
+        const id = paintRefId(node.attrs[slot]);
+        if (id != null && gradients.has(id)) {
+          if (!node.gradients) node.gradients = {};
+          node.gradients[slot] = cloneGradient(gradients.get(id));
+          node.attrs[slot] = node.gradients[slot].stops[0]?.color || "#000000";
+        }
+      }
+    }
+    if (Array.isArray(node.children)) for (const c of node.children) resolveGradientRefs(c, gradients);
+  }
+  function cloneGradient(g) {
+    return { type: g.type, angle: g.angle, stops: g.stops.map((s) => ({ ...s })) };
+  }
+  function parseInlineStyle(style) {
+    const out = {};
+    if (!style) return out;
+    for (const decl of style.split(";")) {
+      const idx = decl.indexOf(":");
+      if (idx < 0) continue;
+      const k = decl.slice(0, idx).trim();
+      const v = decl.slice(idx + 1).trim();
+      if (k && v) out[k] = v;
+    }
+    return out;
+  }
+  function clamp012(n) {
+    if (!Number.isFinite(n)) return 0;
+    return n < 0 ? 0 : n > 1 ? 1 : n;
   }
   function inlineStyleClasses(root) {
     const styleEls = root.getElementsByTagName("style");

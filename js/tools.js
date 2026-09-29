@@ -15,6 +15,7 @@ import { anchorsToPath } from "./paths.js";
 const CANVAS_BBOX = { x: 0, y: 0, width: 1000, height: 700 };
 const SNAP_THRESHOLD = 6; // canvas units — feels right at default zoom
 const DRAG_THRESHOLD = 3; // screen px the pointer must travel before a move "takes"
+const ROUND_RECT_RADIUS = 16; // default corner radius for the rounded-rect tool
 
 let hoveredId = null;     // top-level id currently under the pointer (select tool)
 
@@ -542,8 +543,14 @@ function startDraw(e, p) {
 }
 
 function seedNodeFor(tool, id, p) {
-  const base = { id, type: tool, transform: emptyTransform() };
+  // A rounded rect is a plain `rect` node carrying rx/ry — no distinct node type,
+  // so render / export / resize handle it with zero extra plumbing.
+  const type = tool === "roundrect" ? "rect" : tool;
+  const base = { id, type, transform: emptyTransform() };
   const style = tool === "line" ? { ...LINE_STYLE } : { ...DEFAULT_STYLE };
+  if (tool === "roundrect") {
+    return { ...base, attrs: { x: p.x, y: p.y, width: 0, height: 0, rx: ROUND_RECT_RADIUS, ry: ROUND_RECT_RADIUS, ...style } };
+  }
   if (tool === "rect") {
     return { ...base, attrs: { x: p.x, y: p.y, width: 0, height: 0, rx: 0, ry: 0, ...style } };
   }
@@ -567,7 +574,7 @@ function updateDraw(p, e) {
   if (grid.isSnap() && !e.altKey) p = grid.snapPoint(p.x, p.y);
   let dx = p.x - origin.x;
   let dy = p.y - origin.y;
-  if (e.shiftKey && (tool === "rect" || tool === "ellipse" || tool === "circle")) {
+  if (e.shiftKey && (tool === "rect" || tool === "roundrect" || tool === "ellipse" || tool === "circle")) {
     const s = Math.max(Math.abs(dx), Math.abs(dy));
     dx = Math.sign(dx || 1) * s;
     dy = Math.sign(dy || 1) * s;
@@ -575,7 +582,7 @@ function updateDraw(p, e) {
   mutate((root) => {
     const n = findNode(root, id);
     if (!n) return;
-    if (tool === "rect") {
+    if (tool === "rect" || tool === "roundrect") {
       n.attrs.x = Math.min(origin.x, origin.x + dx);
       n.attrs.y = Math.min(origin.y, origin.y + dy);
       n.attrs.width = Math.abs(dx);
@@ -625,7 +632,7 @@ function finishDraw(g) {
 }
 
 function isEmptyShape(node, tool) {
-  if (tool === "rect") return !(node.attrs.width > 0 && node.attrs.height > 0);
+  if (tool === "rect" || tool === "roundrect") return !(node.attrs.width > 0 && node.attrs.height > 0);
   if (tool === "ellipse") return !(node.attrs.rx > 0 && node.attrs.ry > 0);
   if (tool === "circle") return !(node.attrs.r > 0);
   if (tool === "line") return node.attrs.x1 === node.attrs.x2 && node.attrs.y1 === node.attrs.y2;

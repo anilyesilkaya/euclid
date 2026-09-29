@@ -10,6 +10,7 @@ A tiny, zero-dependency SVG editor that runs in the browser. Draw primitives, ar
 - **Pen / bézier paths** — click to drop corner anchors, click-drag to pull smooth bézier handles, click the first anchor to close; finish with `Enter`, double-click, or `Esc`. Paths are a structured anchor model, so the SVG `d` is always derived, never hand-edited
 - **Path point editing** — a lone selected pen path gets Illustrator-style node chrome: drag anchors and control points to reshape (the opposite handle mirrors for smoothness; `Alt` breaks the pair), double-click an anchor to delete it or a control point to retract it — all under any rotation
 - **Closed-path extras** — flip a closed path between **Edit points** and **Convert to shape** (get a normal bbox with resize + rotate, non-destructively), and dial in a **corner radius** that fillets its hard corners live
+- **Gradients** — set a **linear gradient** as fill or stroke via a Solid / Linear paint-type dropdown; edit angle and multiple color stops (add / recolor / drag offset / delete) with a live preview. Gradients travel through export and import, and are re-associated per shape so duplicate/paste just works
 - **Connectors** — draw an edge between two shapes; it attaches to each shape's bounding box and re-routes automatically as the shapes move, resize, or rotate. Choose **straight** or **orthogonal (elbow)** routing, toggle arrowheads at either end, and add a mid-edge label. Orthogonal connectors are editable — drag a segment to bend it (adds a waypoint), drag a waypoint to move it, double-click to delete. Arrowheads stay a fixed size at any zoom, and deleting an attached shape cleans up its connectors
 - **Direct manipulation** — move, resize (8 handles), rotate; resizing a group or multi-selection scales the whole set about the union bbox's fixed anchor
 - **Selection** — click, shift-click, and drag-marquee, with group descent on double-click
@@ -79,9 +80,9 @@ Zoom with Ctrl/⌘+wheel (at the cursor); pan with a two-finger scroll, middle-m
 
 The importer is deliberately strict — anything it can't represent throws a specific error instead of silently dropping data.
 
-**Supported:** `rect`, `circle`, `ellipse`, `line`, `polyline`, `text`, `path`, `g`, `title`/`desc`/`metadata` (ignored), `<style>` and `<defs>` containing only styles, `transform` composed of `translate()`, `rotate()`, and rigid `matrix()`.
+**Supported:** `rect`, `circle`, `ellipse`, `line`, `polyline`, `text`, `path`, `g`, `title`/`desc`/`metadata` (ignored), `<style>` and `<defs>` containing only styles or `<linearGradient>`s, `linearGradient` paint (with `url(#...)` fill/stroke references that resolve to one), `transform` composed of `translate()`, `rotate()`, and rigid `matrix()`.
 
-**Rejected with a clear message:** gradients, patterns, filters, clip paths, masks, `<use>`, `<image>`, `<symbol>`, `<marker>`, `url(#...)` paint references, and any transform that includes scale or shear.
+**Rejected with a clear message:** radial gradients, patterns, filters, clip paths, masks, `<use>`, `<image>`, `<symbol>`, `<marker>`, `url(#...)` references that don't resolve to a linear gradient, and any transform that includes scale or shear.
 
 Illustrator's default "SVG 1.1" export (with `.st0 { fill: #... }` class styling) works out of the box.
 
@@ -102,6 +103,7 @@ js/
   import.js         strict SVG parser (with Illustrator class inlining)
   persist.js        native .euclid.json save/open + debounced localStorage autosave
   paths.js          structured pen-path anchor model ↔ SVG path `d` (with rounding)
+  paint.js          gradient paint-server model (linear) ↔ derived <linearGradient> defs
   layers.js         Illustrator-style layers panel (drag + context-menu reorder)
   align.js          alignment + distribution ops
   guides.js         smart snapping guides drawn during drag

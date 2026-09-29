@@ -4,6 +4,7 @@
 import { getDoc } from "./state.js";
 import { elementBBoxInCanvas, resolveConnector, connectorMidpoint } from "./render.js";
 import { anchorsToPath, anchorsBBox } from "./paths.js";
+import { collectGradients, linearGradientMarkup, paintRef } from "./paint.js";
 
 const DEFAULT_VIEWBOX = { x: 0, y: 0, width: 1000, height: 700 };
 const TIGHT_PADDING = 8;
@@ -44,8 +45,9 @@ export function serialize() {
     `<?xml version="1.0" encoding="UTF-8"?>`,
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbStr}">`,
   ];
-  // Emit arrowhead marker defs only when some connector uses them.
-  lines.push(...arrowDefs(doc));
+  // Emit a single <defs> block holding arrowhead markers and gradient paint
+  // servers — only when the document actually references them.
+  lines.push(...defsBlock(doc));
   for (const child of doc.children) {
     lines.push(...emitNode(child, 1));
   }
@@ -53,10 +55,12 @@ export function serialize() {
   return lines.join("\n") + "\n";
 }
 
-function arrowDefs(doc) {
+function defsBlock(doc) {
+  // Arrowhead markers are top-level-connector-only; gradients live anywhere.
   const needsEnd = doc.children.some(c => c.type === "connector" && c.arrowEnd);
   const needsStart = doc.children.some(c => c.type === "connector" && c.arrowStart);
-  if (!needsEnd && !needsStart) return [];
+  const gradients = collectGradients(doc);
+  if (!needsEnd && !needsStart && !gradients.length) return [];
   const out = [`${INDENT}<defs>`];
   const marker = (id) => [
     `${INDENT}${INDENT}<marker id="${id}" markerWidth="12" markerHeight="12" refX="9" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse">`,
@@ -65,6 +69,9 @@ function arrowDefs(doc) {
   ];
   if (needsEnd) out.push(...marker("arrow-end"));
   if (needsStart) out.push(...marker("arrow-start"));
+  for (const g of gradients) {
+    out.push(...linearGradientMarkup(g.def, g.id, INDENT + INDENT, INDENT));
+  }
   out.push(`${INDENT}</defs>`);
   return out;
 }
@@ -285,8 +292,13 @@ function buildAttrs(node) {
     if (isDefault(k, v)) continue;
     emit(k, v);
   }
-  // 3) Presentation
+  // 3) Presentation. A gradient in a paint slot (fill/stroke) overrides the
+  // stored solid color with a `url(#…)` reference to the emitted <defs>.
   for (const k of PRESENTATION_ATTRS) {
+    if ((k === "fill" || k === "stroke")) {
+      const ref = paintRef(node, k);
+      if (ref) { emit(k, ref); continue; }
+    }
     if (!(k in node.attrs)) continue;
     const v = node.attrs[k];
     if (isDefault(k, v)) continue;

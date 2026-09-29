@@ -9,10 +9,13 @@ const SUPPORTED_CONTAINERS = new Set(["g"]);
 // Metadata-only elements we can safely skip at parse time (they don't render).
 // <style> and <defs> are handled by the preflight pass (class inlining, paint-server rejection).
 const IGNORABLE = new Set(["title", "desc", "metadata", "style", "defs"]);
-// Paint-server / filter / mask elements. If present anywhere we reject with a
-// specific message rather than silently dropping them.
+// Elements collected separately (not parsed as shapes) but still supported.
+const COLLECTED_ELEMENTS = new Set(["linearGradient"]);
+// Paint-server / filter / mask elements we still can't represent. Present anywhere
+// → reject with a specific message rather than silently dropping them. Note
+// linearGradient is deliberately absent: it's collected into the paint model.
 const PAINT_SERVER_ELEMENTS = new Set([
-  "linearGradient", "radialGradient", "pattern",
+  "radialGradient", "pattern",
   "filter", "clipPath", "mask",
   "symbol", "marker", "use", "image",
 ]);
@@ -56,10 +59,13 @@ export function parseSvgToNodes(source) {
     throw new ImportError(`Root element must be <svg> (got <${root?.localName || "empty"}>)`);
   }
 
+  // Collect <linearGradient> defs first so preflight can accept url(#…) paint
+  // references that resolve to one, and so shapes can bind to the paint model.
+  const gradients = collectLinearGradients(root);
   // Preflight: reject unsupported paint servers / references before doing any parsing.
   // Illustrator exports commonly include <defs> with only <style>, which is fine —
   // reject only when <defs> contains something we can't represent.
-  preflightRejectPaintServers(root);
+  preflightRejectPaintServers(root, gradients);
   // Inline class-based styles from any <style> blocks so downstream code sees plain attributes.
   inlineStyleClasses(root);
 
@@ -69,41 +75,175 @@ export function parseSvgToNodes(source) {
     if (parsed) nodes.push(parsed);
   }
   if (nodes.length === 0) throw new ImportError("No supported elements found");
+  // Resolve url(#…) fill/stroke references into the inline gradient paint model.
+  for (const n of nodes) resolveGradientRefs(n, gradients);
   return nodes;
 }
 
 // Walk the entire tree once and throw if we encounter anything we can't render.
-// Also flags url(#...) paint references — supporting those would require a paint-server model.
-function preflightRejectPaintServers(root) {
+// url(#...) paint references are allowed only when they resolve to a collected
+// <linearGradient>; anything else (radial, pattern, unknown id) still rejects.
+function preflightRejectPaintServers(root, gradients) {
+  const resolves = (v) => {
+    const id = paintRefId(v);
+    return id != null && gradients.has(id);
+  };
   const stack = [root];
   while (stack.length) {
     const el = stack.pop();
     for (const child of Array.from(el.children)) {
       const name = child.localName;
+      // A <linearGradient> is collected into the paint model, not rejected. Its
+      // own subtree (<stop>s) needn't be walked for paint refs.
+      if (COLLECTED_ELEMENTS.has(name)) continue;
       if (PAINT_SERVER_ELEMENTS.has(name)) {
         throw new ImportError(
-          `<${name}> is not supported — gradients, patterns, filters, clip paths, masks, ` +
+          `<${name}> is not supported — radial gradients, patterns, filters, clip paths, masks, ` +
           `<use>, and <image> can't be represented in this editor's model.`,
         );
       }
       // Check fill/stroke on this element for url(#...) references.
       for (const key of ["fill", "stroke"]) {
         const v = child.getAttribute(key);
-        if (v && /url\s*\(/i.test(v)) {
+        if (v && /url\s*\(/i.test(v) && !resolves(v)) {
           throw new ImportError(
-            `${key}="${v}" references a paint server (gradient/pattern) — not supported.`,
+            `${key}="${v}" references an unsupported paint server (only linear gradients are supported).`,
           );
         }
       }
       const style = child.getAttribute("style");
       if (style && /url\s*\(/i.test(style)) {
-        throw new ImportError(
-          `style="${style.slice(0, 80)}..." references a paint server (gradient/pattern) — not supported.`,
-        );
+        // Allow only if every url(...) in the style resolves to a linear gradient.
+        const refs = style.match(/url\s*\([^)]*\)/gi) || [];
+        if (!refs.every(resolves)) {
+          throw new ImportError(
+            `style="${style.slice(0, 80)}..." references an unsupported paint server (only linear gradients are supported).`,
+          );
+        }
       }
       stack.push(child);
     }
   }
+}
+
+// Extract the id from a `url(#id)` paint reference (with or without quotes), or
+// null if the value isn't a local url reference.
+function paintRefId(v) {
+  if (typeof v !== "string") return null;
+  const m = /url\s*\(\s*['"]?#([^'")\s]+)['"]?\s*\)/i.exec(v);
+  return m ? m[1] : null;
+}
+
+// Collect every <linearGradient id="…"> in the tree into a Map(id → GradientDef)
+// in our paint model. Resolves xlink:href / href stop inheritance one level and
+// converts the gradient's coordinates + gradientTransform into a single angle.
+function collectLinearGradients(root) {
+  const byId = new Map();      // id → element
+  const els = root.getElementsByTagName("linearGradient");
+  for (const el of Array.from(els)) {
+    const id = el.getAttribute("id");
+    if (id) byId.set(id, el);
+  }
+  const out = new Map();       // id → GradientDef
+  for (const [id, el] of byId) {
+    const def = linearGradientToDef(el, byId);
+    if (def) out.set(id, def);
+  }
+  return out;
+}
+
+// Convert a <linearGradient> element into { type:"linear", angle, stops }.
+function linearGradientToDef(el, byId) {
+  // Stops may be inherited via href from a referenced gradient.
+  let stopHost = el;
+  let stops = readStops(el);
+  if (stops.length === 0) {
+    const href = el.getAttribute("href") || el.getAttribute("xlink:href");
+    const refId = href && href.startsWith("#") ? href.slice(1) : null;
+    if (refId && byId.has(refId)) { stopHost = byId.get(refId); stops = readStops(stopHost); }
+  }
+  if (stops.length < 2) return null;
+  return { type: "linear", angle: linearGradientAngle(el), stops };
+}
+
+function readStops(el) {
+  const out = [];
+  for (const s of Array.from(el.children)) {
+    if (s.localName !== "stop") continue;
+    let offset = parseFloat(s.getAttribute("offset"));
+    if (!Number.isFinite(offset)) offset = 0;
+    if (String(s.getAttribute("offset")).includes("%")) offset /= 100;
+    if (offset > 1) offset /= 100; // tolerate "50" meaning 50%
+    // stop-color / stop-opacity can be attribute or inline style.
+    const style = parseInlineStyle(s.getAttribute("style"));
+    const color = s.getAttribute("stop-color") || style["stop-color"] || "#000000";
+    const opRaw = s.getAttribute("stop-opacity") || style["stop-opacity"];
+    const opacity = opRaw != null && opRaw !== "" ? clamp01(parseFloat(opRaw)) : 1;
+    out.push({ offset: clamp01(offset), color, opacity: Number.isFinite(opacity) ? opacity : 1 });
+  }
+  return out;
+}
+
+// Derive our single `angle` (degrees, 0 = →, 90 = ↓) from a gradient's x1/y1/x2/y2
+// plus any rotate() in gradientTransform. Defaults to horizontal when unset.
+function linearGradientAngle(el) {
+  const num = (k, d) => {
+    const raw = el.getAttribute(k);
+    if (raw == null) return d;
+    let n = parseFloat(raw);
+    if (!Number.isFinite(n)) return d;
+    if (String(raw).includes("%")) n /= 100;
+    return n;
+  };
+  const x1 = num("x1", 0), y1 = num("y1", 0), x2 = num("x2", 1), y2 = num("y2", 0);
+  let base = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+  // Fold a rotate(<deg> …) from gradientTransform into the axis angle.
+  const gt = el.getAttribute("gradientTransform");
+  if (gt) {
+    const m = /rotate\s*\(\s*(-?[\d.]+)/.exec(gt);
+    if (m) base += parseFloat(m[1]);
+  }
+  return ((Math.round(base) % 360) + 360) % 360;
+}
+
+// Rewrite a node's (and its subtree's) url(#…) fill/stroke into node.gradients.
+function resolveGradientRefs(node, gradients) {
+  if (!node || typeof node !== "object") return;
+  if (node.attrs) {
+    for (const slot of ["fill", "stroke"]) {
+      const id = paintRefId(node.attrs[slot]);
+      if (id != null && gradients.has(id)) {
+        if (!node.gradients) node.gradients = {};
+        // Clone so two shapes referencing the same def don't share one object.
+        node.gradients[slot] = cloneGradient(gradients.get(id));
+        // Drop the raw url(...) string; keep a solid fallback for round-safety.
+        node.attrs[slot] = node.gradients[slot].stops[0]?.color || "#000000";
+      }
+    }
+  }
+  if (Array.isArray(node.children)) for (const c of node.children) resolveGradientRefs(c, gradients);
+}
+
+function cloneGradient(g) {
+  return { type: g.type, angle: g.angle, stops: g.stops.map((s) => ({ ...s })) };
+}
+
+function parseInlineStyle(style) {
+  const out = {};
+  if (!style) return out;
+  for (const decl of style.split(";")) {
+    const idx = decl.indexOf(":");
+    if (idx < 0) continue;
+    const k = decl.slice(0, idx).trim();
+    const v = decl.slice(idx + 1).trim();
+    if (k && v) out[k] = v;
+  }
+  return out;
+}
+
+function clamp01(n) {
+  if (!Number.isFinite(n)) return 0;
+  return n < 0 ? 0 : n > 1 ? 1 : n;
 }
 
 // Collect every <style> block, parse simple ".cls { k: v; ... }" rules,
