@@ -616,8 +616,15 @@ function syncGradientEditor(slot, def) {
   const active = isValidGradient(def);
   ed.root.hidden = !active;
   if (!active) return;
-  const focused = ed.root.contains(document.activeElement);
-  if (!focused) {
+  // Only guard against clobbering controls the user is *actively editing*: the
+  // angle inputs, or a stop's color/offset input mid-drag. Focus on the add or
+  // delete buttons must NOT block the rebuild — otherwise the stop they just
+  // added or removed never appears until the panel is refreshed by re-selecting.
+  const focus = document.activeElement;
+  const editingAngle = focus === ed.angle || focus === ed.angleNum;
+  const editingStop = ed.stops.contains(focus) &&
+    (focus.classList.contains("grad-stop-offset") || focus.classList.contains("grad-stop-color"));
+  if (!editingAngle) {
     ed.angle.value = def.angle;
     ed.angleNum.value = def.angle;
   }
@@ -626,8 +633,8 @@ function syncGradientEditor(slot, def) {
     .slice().sort((a, b) => a.offset - b.offset)
     .map((s) => `${s.color} ${Math.round(s.offset * 100)}%`).join(", ");
   ed.preview.style.background = `linear-gradient(${def.angle}deg, ${stopsCss})`;
-  // Don't rebuild rows while the user is mid-interaction with one (avoids losing focus).
-  if (focused) return;
+  // Don't rebuild rows while dragging a stop's slider/color (would break the drag).
+  if (editingStop) return;
   ed.stops.innerHTML = "";
   const canDelete = def.stops.length > 2;
   def.stops.forEach((s, i) => {

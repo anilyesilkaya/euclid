@@ -3884,14 +3884,16 @@
     const active = isValidGradient(def);
     ed.root.hidden = !active;
     if (!active) return;
-    const focused = ed.root.contains(document.activeElement);
-    if (!focused) {
+    const focus = document.activeElement;
+    const editingAngle = focus === ed.angle || focus === ed.angleNum;
+    const editingStop = ed.stops.contains(focus) && (focus.classList.contains("grad-stop-offset") || focus.classList.contains("grad-stop-color"));
+    if (!editingAngle) {
       ed.angle.value = def.angle;
       ed.angleNum.value = def.angle;
     }
     const stopsCss = def.stops.slice().sort((a, b) => a.offset - b.offset).map((s) => `${s.color} ${Math.round(s.offset * 100)}%`).join(", ");
     ed.preview.style.background = `linear-gradient(${def.angle}deg, ${stopsCss})`;
-    if (focused) return;
+    if (editingStop) return;
     ed.stops.innerHTML = "";
     const canDelete = def.stops.length > 2;
     def.stops.forEach((s, i) => {
