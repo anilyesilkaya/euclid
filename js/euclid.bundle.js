@@ -1432,6 +1432,7 @@
   var penInProgress = null;
   var gesture = null;
   var downClient = null;
+  var lastTransform = null;
   function mount3(svg3) {
     canvasSvg2 = svg3;
     svg3.addEventListener("pointerdown", onPointerDown);
@@ -1498,6 +1499,8 @@
         canvasSvg2.classList.add("dragging");
         canvasSvg2.classList.toggle("will-duplicate", !!gesture.duplicate);
         beginMovePayload(e);
+      } else if (gesture.type === "rotate") {
+        beginRotatePayload();
       }
     }
     if (gesture.type === "draw") {
@@ -1557,11 +1560,28 @@
     } else if (g.type === "connector") {
       finishConnector(g, e);
     } else if (g.type === "move") {
-      if (g.moved && g.ids.length > 0) commit(g.type);
-      else abort();
+      if (g.moved && g.ids.length > 0) {
+        commit(g.type);
+        lastTransform = {
+          kind: "move",
+          dx: g.appliedDx || 0,
+          dy: g.appliedDy || 0,
+          duplicate: !!g.duplicate
+        };
+      } else abort();
     } else if (g.type === "resize" || g.type === "rotate") {
-      if (g.moved) commit(g.type);
-      else abort();
+      if (g.moved) {
+        commit(g.type);
+        if (g.type === "rotate") {
+          lastTransform = {
+            kind: "rotate",
+            deg: g.appliedDeg || 0,
+            duplicate: !!g.duplicate,
+            pivot: { x: g.center.x, y: g.center.y }
+            // canvas-space center of rotation
+          };
+        }
+      } else abort();
       if (g.type === "rotate") hideRotationReadout();
     } else if (g.type === "waypoint") {
       if (g.moved) commit("waypoint");
@@ -1770,6 +1790,8 @@
     }
     const finalDx = dx + snapDx;
     const finalDy = dy + snapDy;
+    gesture.appliedDx = finalDx;
+    gesture.appliedDy = finalDy;
     mutate((root) => {
       for (const id of ids) {
         const node = findNode(root, id);
@@ -2705,12 +2727,35 @@
       last: p,
       moved: false,
       id,
+      // Alt/Option held at pointerdown → rotate a duplicate, leaving the original
+      // in place (Illustrator rotate-and-copy). Deferred to the drag threshold so a
+      // click never spawns a copy — see beginRotatePayload().
+      duplicate: !!(e && e.altKey),
       center: centerCanvas,
       localCx,
       localCy,
       startAngle: Math.atan2(p.y - centerCanvas.y, p.x - centerCanvas.x),
       originalRot: node.transform?.rot || 0
     };
+  }
+  function beginRotatePayload() {
+    const g = gesture;
+    if (!g.duplicate) return;
+    const doc2 = getDoc();
+    const path = findPath(doc2, g.id);
+    if (!path || !path.length) return;
+    const topId = path[0].id;
+    let newTopId = null;
+    mutate((root) => {
+      const top = findNode(root, topId);
+      if (!top) return;
+      const copy = deepReId(top);
+      root.children.push(copy);
+      newTopId = copy.id;
+    });
+    if (!newTopId) return;
+    g.id = newTopId;
+    setSelection([newTopId]);
   }
   function updateRotate(p, e) {
     const { id, center, startAngle, originalRot, localCx, localCy } = gesture;
@@ -2721,6 +2766,7 @@
       const step = e.ctrlKey || e.metaKey ? 1 : 22.5;
       newRot = Math.round(newRot / step) * step;
     }
+    gesture.appliedDeg = newRot - originalRot;
     mutate((root) => {
       const n = findNode(root, id);
       if (!n) return;
@@ -2730,6 +2776,54 @@
       n.transform.cy = localCy;
     });
     showRotationReadout(newRot, p);
+  }
+  function transformAgain() {
+    const lt = lastTransform;
+    if (!lt) return false;
+    const sel = [...getSelection()];
+    if (sel.length === 0) return true;
+    const newIds = [];
+    record(() => {
+      mutate((root) => {
+        const topIds = /* @__PURE__ */ new Set();
+        for (const id of sel) {
+          const path = findPath(root, id);
+          if (path && path.length) topIds.add(path[0].id);
+        }
+        const targets = root.children.filter((c) => topIds.has(c.id));
+        for (const src of targets) {
+          let node = src;
+          if (lt.duplicate) {
+            node = deepReId(src);
+            root.children.push(node);
+            newIds.push(node.id);
+          }
+          applyRecordedTransform(node, lt);
+        }
+      });
+    });
+    if (lt.duplicate && newIds.length) setSelection(newIds);
+    return true;
+  }
+  function applyRecordedTransform(node, lt) {
+    if (!node.transform) node.transform = emptyTransform();
+    const tr = node.transform;
+    if (lt.kind === "move") {
+      tr.tx = (tr.tx || 0) + lt.dx;
+      tr.ty = (tr.ty || 0) + lt.dy;
+      return;
+    }
+    if (lt.kind === "rotate") {
+      const P = lt.pivot;
+      const cx = tr.cx || 0, cy = tr.cy || 0;
+      const tx = tr.tx || 0, ty = tr.ty || 0;
+      const th = lt.deg * Math.PI / 180;
+      const cos = Math.cos(th), sin = Math.sin(th);
+      const vx = cx + tx - P.x, vy = cy + ty - P.y;
+      tr.tx = cos * vx - sin * vy + P.x - cx;
+      tr.ty = sin * vx + cos * vy + P.y - cy;
+      tr.rot = (tr.rot || 0) + lt.deg;
+    }
   }
   var rotationReadoutEl = null;
   function showRotationReadout(deg, p) {
@@ -4392,7 +4486,7 @@
         return;
       }
       if (mod && e.key.toLowerCase() === "d") {
-        duplicateSelection();
+        if (!transformAgain()) duplicateSelection();
         e.preventDefault();
         return;
       }

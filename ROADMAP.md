@@ -123,20 +123,24 @@ save/open format with debounced autosave.
   inheritance) and resolves `url(#…)` fills/strokes back into the model; radial
   gradients, patterns, and unknown paint refs are still rejected with a specific
   message. **Radial gradients** are the documented fast-follow.
-- **M10 — Illustrator-style rotate + copy and "Transform Again."** Make the
-  transform-with-duplicate and repeat behaviors match Adobe Illustrator:
-  - **Alt/Option-drag during a transform duplicates.** Today Euclid only
-    duplicate-drags on *move* (Ctrl-drag). Extend duplicate-on-drag to the
-    **rotate** (and later scale) gestures, and align the modifier with
-    Illustrator's Alt/Option.
-  - **Ctrl+D = "Transform Again."** Repeat the *last transform* (move, rotate,
-    or scale — including a duplicate) on the current selection, enabling
-    step-and-repeat (e.g. rotate-and-copy 15° twelve times to make a clock
-    face / radial pattern). Today Ctrl+D is a fixed duplicate at (+10, +10);
-    this item redefines it to replay the last recorded transform delta.
-  - Requires storing a "last transform" descriptor (kind + delta + pivot) when
-    a gesture ends, and a repeat op that re-applies it (optionally
-    re-duplicating) via `mutate`.
+- **M10 — Illustrator-style rotate + copy and "Transform Again."** ✅ **Done.**
+  The transform-with-duplicate and repeat behaviors now match Adobe Illustrator:
+  - **Alt/Option-drag during a rotate duplicates.** Move already
+    duplicate-dragged on Ctrl-drag; the **rotate** gesture now duplicate-drags on
+    **Alt**-drag (deferred to the drag threshold via `beginRotatePayload`, so a
+    click never spawns a copy), leaving the original in place and spinning a fresh
+    copy about the same pivot.
+  - **Ctrl+D = "Transform Again."** `transformAgain()` replays the *last committed
+    transform* (move or rotate — including whether it duplicated) on the current
+    selection, enabling step-and-repeat: rotate-and-copy 30° then Ctrl+D eleven
+    more times for a radial rosette, or move-and-copy then Ctrl+D for an evenly
+    spaced row. With no transform recorded yet, Ctrl+D falls back to the plain
+    (+10, +10) duplicate so it still does the obvious thing on a fresh selection.
+  - A `lastTransform` descriptor (`{ kind, dx/dy | deg + canvas-space pivot,
+    duplicate }`) is captured when a move/rotate gesture commits;
+    `applyRecordedTransform` re-applies it via `mutate` — a plain translate for
+    move, or exact transform algebra (rotate about the fixed canvas pivot composed
+    onto the node's existing translate+rotate) for rotate.
 
 ## Phase 4 — Styling & polish (small, high-visibility; can interleave)
 

@@ -62,7 +62,7 @@ fetched over `file://`, the modular sources themselves need a static server — 
 | `Ctrl+S` / `Ctrl+O` | Save / open a `.euclid.json` document |
 | `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) | Undo / Redo |
 | `Ctrl+A` | Select all top-level nodes |
-| `Ctrl+D` | Duplicate selection |
+| `Ctrl+D` | Transform Again — replay the last move/rotate (re-duplicating if it was a duplicate-drag); plain duplicate if none yet |
 | `Ctrl+C` / `Ctrl+V` | Copy / Paste |
 | `Ctrl+G` / `Ctrl+Shift+G` | Group / Ungroup |
 | `Ctrl+'` / `Ctrl+Shift+'` | Toggle grid / snap-to-grid |
@@ -72,7 +72,9 @@ fetched over `file://`, the modular sources themselves need a static server — 
 
 While drawing: hold `Shift` to constrain rect/ellipse to a square/circle, or a line to 45° increments. With the pen, click for corners and click-drag for smooth bézier handles; click the first anchor to close the path. While moving: hold `Alt` to bypass snapping (both smart guides and grid). Ctrl+drag a selection to duplicate it as you move. While editing path points, hold `Alt` to break a smooth anchor's handle pair.
 
-While rotating: a live angle readout follows the handle; hold `Shift` to snap to 22.5° increments, or `Shift`+`Ctrl` for 1° fine steps.
+While rotating: a live angle readout follows the handle; hold `Shift` to snap to 22.5° increments, or `Shift`+`Ctrl` for 1° fine steps. Hold `Alt` while dragging the rotate handle to leave the original in place and rotate a duplicate (Illustrator rotate-and-copy).
+
+**Transform Again (`Ctrl+D`)** — repeats the last move or rotate on the current selection, re-duplicating when the transform was itself a duplicate-drag. So a Ctrl-drag copy followed by `Ctrl+D`×N steps out an evenly spaced row, and an Alt-drag rotate-copy followed by `Ctrl+D`×N sweeps out a radial pattern (e.g. rotate-and-copy 30°, then `Ctrl+D` eleven more times for a twelve-spoke rosette).
 
 Zoom with Ctrl/⌘+wheel (at the cursor); pan with a two-finger scroll, middle-mouse drag, or `Space`+drag.
 

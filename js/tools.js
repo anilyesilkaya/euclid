@@ -53,6 +53,13 @@ let penInProgress = null;       // { id, previewEl, dragging } while drawing a p
 let gesture = null;
 let downClient = null;    // {x,y} client coords at pointerdown — for the drag threshold
 
+// "Transform Again" descriptor: the last committed move/rotate gesture, so Ctrl+D
+// can replay it (Illustrator step-and-repeat). Shape:
+//   { kind: "move",   dx, dy, duplicate }
+//   { kind: "rotate", deg, duplicate }   // rotation is about each node's own center
+// A plain duplicate (Ctrl+D with no prior transform) falls back to a fixed nudge.
+let lastTransform = null;
+
 export function mount(svg) {
   canvasSvg = svg;
 
@@ -136,6 +143,8 @@ function onPointerMove(e) {
       canvasSvg.classList.add("dragging");
       canvasSvg.classList.toggle("will-duplicate", !!gesture.duplicate);
       beginMovePayload(e);
+    } else if (gesture.type === "rotate") {
+      beginRotatePayload();
     }
   }
 
@@ -200,11 +209,24 @@ function onPointerUp(e) {
   } else if (g.type === "move") {
     // Commit only a real move that touched at least one movable node (a
     // connector-only selection has an empty moving set — nothing to record).
-    if (g.moved && g.ids.length > 0) history.commit(g.type);
-    else history.abort();
+    if (g.moved && g.ids.length > 0) {
+      history.commit(g.type);
+      lastTransform = {
+        kind: "move",
+        dx: g.appliedDx || 0, dy: g.appliedDy || 0,
+        duplicate: !!g.duplicate,
+      };
+    } else history.abort();
   } else if (g.type === "resize" || g.type === "rotate") {
-    if (g.moved) history.commit(g.type);
-    else history.abort();
+    if (g.moved) {
+      history.commit(g.type);
+      if (g.type === "rotate") {
+        lastTransform = {
+          kind: "rotate", deg: g.appliedDeg || 0, duplicate: !!g.duplicate,
+          pivot: { x: g.center.x, y: g.center.y }, // canvas-space center of rotation
+        };
+      }
+    } else history.abort();
     if (g.type === "rotate") hideRotationReadout();
   } else if (g.type === "waypoint") {
     // A real drag committed a moved/inserted waypoint; a click that never
@@ -452,6 +474,9 @@ function updateMove(dx, dy, e) {
 
   const finalDx = dx + snapDx;
   const finalDy = dy + snapDy;
+  // Remember the net delta so "Transform Again" (Ctrl+D) can replay this move.
+  gesture.appliedDx = finalDx;
+  gesture.appliedDy = finalDy;
   mutate((root) => {
     for (const id of ids) {
       const node = findNode(root, id);
@@ -1485,11 +1510,41 @@ function startRotate(e, handleEl, p) {
     last: p,
     moved: false,
     id,
+    // Alt/Option held at pointerdown → rotate a duplicate, leaving the original
+    // in place (Illustrator rotate-and-copy). Deferred to the drag threshold so a
+    // click never spawns a copy — see beginRotatePayload().
+    duplicate: !!(e && e.altKey),
     center: centerCanvas,
     localCx, localCy,
     startAngle: Math.atan2(p.y - centerCanvas.y, p.x - centerCanvas.x),
     originalRot: node.transform?.rot || 0,
   };
+}
+
+// Called from onPointerMove when a rotate drag first crosses the threshold. If
+// Alt was held, clone the node in place and rotate the copy instead. The copy
+// shares the original's geometry + transform, so the pivot (center / localCx /
+// localCy / originalRot) captured in startRotate is still correct.
+function beginRotatePayload() {
+  const g = gesture;
+  if (!g.duplicate) return;
+  const doc = getDoc();
+  const path = findPath(doc, g.id);
+  if (!path || !path.length) return;
+  const topId = path[0].id;
+  let newTopId = null;
+  mutate((root) => {
+    const top = findNode(root, topId);
+    if (!top) return;
+    const copy = deepReId(top);
+    root.children.push(copy);   // sits exactly atop the original
+    newTopId = copy.id;
+  });
+  if (!newTopId) return;
+  // The rotate handle targets the top-level node directly (single selection), so
+  // retarget the gesture at the fresh copy.
+  g.id = newTopId;
+  setSelection([newTopId]);
 }
 
 function updateRotate(p, e) {
@@ -1504,6 +1559,8 @@ function updateRotate(p, e) {
     const step = (e.ctrlKey || e.metaKey) ? 1 : 22.5;
     newRot = Math.round(newRot / step) * step;
   }
+  // Net angular change from the gesture start — replayed by "Transform Again".
+  gesture.appliedDeg = newRot - originalRot;
   mutate((root) => {
     const n = findNode(root, id);
     if (!n) return;
@@ -1513,6 +1570,72 @@ function updateRotate(p, e) {
     n.transform.cy = localCy;
   });
   showRotationReadout(newRot, p);
+}
+
+// --- "Transform Again" (Ctrl+D) — Illustrator step-and-repeat ---
+
+// Replay the last committed move/rotate on the current selection, re-duplicating
+// first when the recorded transform was itself a duplicate-drag (Ctrl-drag move
+// or Alt-drag rotate). This turns Ctrl+D into a step-and-repeat: rotate-copy a
+// spoke 15°, then Ctrl+D eleven more times for a radial burst. Returns false when
+// no transform has been recorded yet, so the caller can fall back to a plain
+// duplicate.
+export function transformAgain() {
+  const lt = lastTransform;
+  if (!lt) return false;
+  const sel = [...getSelection()];
+  if (sel.length === 0) return true; // a transform exists, but nothing to act on
+
+  const newIds = [];
+  history.record(() => {
+    mutate((root) => {
+      // Unique top-level ancestors of the selection, kept in paint order.
+      const topIds = new Set();
+      for (const id of sel) {
+        const path = findPath(root, id);
+        if (path && path.length) topIds.add(path[0].id);
+      }
+      const targets = root.children.filter((c) => topIds.has(c.id));
+      for (const src of targets) {
+        let node = src;
+        if (lt.duplicate) {
+          node = deepReId(src);   // copy sits exactly atop its source
+          root.children.push(node);
+          newIds.push(node.id);
+        }
+        applyRecordedTransform(node, lt);
+      }
+    });
+  });
+  if (lt.duplicate && newIds.length) setSelection(newIds);
+  return true;
+}
+
+// Re-apply a recorded transform to one node's transform in place. Move is a plain
+// translate; rotate composes a rotation about the fixed canvas pivot P onto the
+// node's existing translate+rotate (exact transform algebra, so the node both
+// spins and orbits P correctly regardless of its current transform).
+function applyRecordedTransform(node, lt) {
+  if (!node.transform) node.transform = emptyTransform();
+  const tr = node.transform;
+  if (lt.kind === "move") {
+    tr.tx = (tr.tx || 0) + lt.dx;
+    tr.ty = (tr.ty || 0) + lt.dy;
+    return;
+  }
+  if (lt.kind === "rotate") {
+    const P = lt.pivot;
+    const cx = tr.cx || 0, cy = tr.cy || 0;
+    const tx = tr.tx || 0, ty = tr.ty || 0;
+    const th = (lt.deg * Math.PI) / 180;
+    const cos = Math.cos(th), sin = Math.sin(th);
+    // t' = Rot(deg)(c + t - P) + P - c   (see derivation: left-multiply the
+    // existing translate+rotate by a rotation about P, keeping rotate-center c).
+    const vx = cx + tx - P.x, vy = cy + ty - P.y;
+    tr.tx = (cos * vx - sin * vy) + P.x - cx;
+    tr.ty = (sin * vx + cos * vy) + P.y - cy;
+    tr.rot = (tr.rot || 0) + lt.deg;
+  }
 }
 
 // --- Rotation readout box (a tooltip that follows the handle during rotate) ---
