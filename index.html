@@ -8,8 +8,11 @@
 <body>
   <div id="app">
     <aside id="toolbar" aria-label="Tools">
-      <button class="tool" data-tool="select" title="Select (V)">
+      <button class="tool" data-tool="select" title="Select (V) — move whole objects">
         <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 3 L4 17 L8 13 L11 20 L13 19 L10 12 L16 12 Z" fill="currentColor"/></svg>
+      </button>
+      <button class="tool" data-tool="directselect" title="Direct Selection (A) — edit path anchors">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M4 3 L4 17 L8 13 L11 20 L13 19 L10 12 L16 12 Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
       </button>
       <button class="tool" data-tool="rect" data-slot="rect" title="Rectangle (R) — hold or right-click for rounded">
         <svg viewBox="0 0 24 24" width="20" height="20"><rect x="4" y="6" width="16" height="12" fill="none" stroke="currentColor" stroke-width="2"/></svg>

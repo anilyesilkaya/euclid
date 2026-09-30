@@ -10,7 +10,7 @@ import { align } from "./align.js";
 import * as persist from "./persist.js";
 import { getGradient, isValidGradient, defaultLinearGradient } from "./paint.js";
 
-const TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", n: "pen", t: "text", x: "connector" };
+const TOOL_KEYS = { v: "select", a: "directselect", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", n: "pen", t: "text", x: "connector" };
 
 // Illustrator-style tool flyouts: a slot button hides related variants revealed
 // on right-click or press-and-hold. The variants share the slot; picking one
