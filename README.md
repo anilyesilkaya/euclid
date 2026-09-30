@@ -63,7 +63,8 @@ fetched over `file://`, the modular sources themselves need a static server — 
 | `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) | Undo / Redo |
 | `Ctrl+A` | Select all top-level nodes |
 | `Ctrl+D` | Transform Again — replay the last move/rotate (re-duplicating if it was a duplicate-drag); plain duplicate if none yet |
-| `Ctrl+C` / `Ctrl+V` | Copy / Paste |
+| `Ctrl+C` / `Ctrl+V` | Copy / Paste (offset +10, +10) |
+| `Ctrl+Shift+V` | Paste in place (exact same location) |
 | `Ctrl+G` / `Ctrl+Shift+G` | Group / Ungroup |
 | `Ctrl+'` / `Ctrl+Shift+'` | Toggle grid / snap-to-grid |
 | `Ctrl +` / `Ctrl -` | Zoom in / out |

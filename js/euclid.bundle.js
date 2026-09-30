@@ -4496,7 +4496,7 @@
         return;
       }
       if (mod && e.key.toLowerCase() === "v") {
-        pasteClipboard();
+        pasteClipboard(...e.shiftKey ? [0, 0] : [10, 10]);
         e.preventDefault();
         return;
       }
@@ -4619,7 +4619,7 @@
     }
     clipboard = nodes;
   }
-  function pasteClipboard() {
+  function pasteClipboard(dx = 10, dy = 10) {
     if (!clipboard || clipboard.length === 0) return;
     const newIds = [];
     record(() => {
@@ -4627,8 +4627,8 @@
         for (const src of clipboard) {
           const copy = deepReId2(src);
           if (!copy.transform) copy.transform = emptyTransform();
-          copy.transform.tx = (copy.transform.tx || 0) + 10;
-          copy.transform.ty = (copy.transform.ty || 0) + 10;
+          copy.transform.tx = (copy.transform.tx || 0) + dx;
+          copy.transform.ty = (copy.transform.ty || 0) + dy;
           root.children.push(copy);
           newIds.push(copy.id);
         }

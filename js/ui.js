@@ -1172,7 +1172,9 @@ function wireKeyboard() {
       copySelection(); e.preventDefault(); return;
     }
     if (mod && e.key.toLowerCase() === "v") {
-      pasteClipboard(); e.preventDefault(); return;
+      // Ctrl+Shift+V pastes in place (exact same location); Ctrl+V nudges by 10px.
+      pasteClipboard(...(e.shiftKey ? [0, 0] : [10, 10]));
+      e.preventDefault(); return;
     }
     if (mod && e.key.toLowerCase() === "g" && !e.shiftKey) {
       groupSelection(); e.preventDefault(); return;
@@ -1297,7 +1299,10 @@ function copySelection() {
   clipboard = nodes;
 }
 
-function pasteClipboard() {
+// Paste the clipboard, offset by (dx, dy) canvas units. The default (+10, +10)
+// nudge keeps the copy visible; paste-in-place (Ctrl+Shift+V) passes (0, 0) so
+// the copy lands exactly atop the original.
+function pasteClipboard(dx = 10, dy = 10) {
   if (!clipboard || clipboard.length === 0) return;
   const newIds = [];
   history.record(() => {
@@ -1305,8 +1310,8 @@ function pasteClipboard() {
       for (const src of clipboard) {
         const copy = deepReId(src);
         if (!copy.transform) copy.transform = emptyTransform();
-        copy.transform.tx = (copy.transform.tx || 0) + 10;
-        copy.transform.ty = (copy.transform.ty || 0) + 10;
+        copy.transform.tx = (copy.transform.tx || 0) + dx;
+        copy.transform.ty = (copy.transform.ty || 0) + dy;
         root.children.push(copy);
         newIds.push(copy.id);
       }
