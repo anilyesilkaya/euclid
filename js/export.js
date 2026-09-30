@@ -35,6 +35,9 @@ const DEFAULTS = {
   "stroke-opacity": 1,
   rx: 0,
   ry: 0,
+  "stroke-linecap": "butt",
+  "stroke-linejoin": "miter",
+  "stroke-dasharray": "none",
 };
 
 export function serialize() {
@@ -151,6 +154,8 @@ function emitNode(node, depth) {
           `stroke="#ffffff"`, `stroke-width="3"`, `stroke-linejoin="round"`,
           `paint-order="stroke"`,
         ];
+        if (style["font-weight"]) lp.push(`font-weight="${escapeXml(String(style["font-weight"]))}"`);
+        if (style["font-style"]) lp.push(`font-style="${escapeXml(String(style["font-style"]))}"`);
         out.push(`${pad}<text ${lp.join(" ")}>${escapeXmlText(String(node.label))}</text>`);
       }
     }
@@ -203,17 +208,20 @@ function labelChildFor(ownerNode) {
   const cx = bbox.x + bbox.width / 2;
   const cy = bbox.y + bbox.height / 2;
   const style = ownerNode.labelStyle || {};
+  const attrs = {
+    x: cx,
+    y: cy,
+    "text-anchor": "middle",
+    "dominant-baseline": "middle",
+    "font-family": style["font-family"] || "sans-serif",
+    "font-size": style["font-size"] || 16,
+    fill: style.fill || "#000000",
+  };
+  if (style["font-weight"]) attrs["font-weight"] = style["font-weight"];
+  if (style["font-style"]) attrs["font-style"] = style["font-style"];
   return {
     type: "text",
-    attrs: {
-      x: cx,
-      y: cy,
-      "text-anchor": "middle",
-      "dominant-baseline": "middle",
-      "font-family": style["font-family"] || "sans-serif",
-      "font-size": style["font-size"] || 16,
-      fill: style.fill || "#000000",
-    },
+    attrs,
     transform: null,
     text: ownerNode.label,
   };

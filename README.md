@@ -6,7 +6,7 @@ A tiny, zero-dependency SVG editor that runs in the browser. Draw primitives, ar
 
 ## Features
 
-- **Shapes** — rectangle, ellipse (hold `Shift` for a circle), circle (hold `Shift` for a perfect circle), line, polyline, and text
+- **Shapes** — rectangle, rounded rectangle, ellipse, circle, line, polyline, and text. The Rectangle and Ellipse toolbar buttons are **Illustrator-style flyouts** — right-click or press-and-hold to reveal a variant (Rect → Rounded rect, Ellipse → Circle); hold `Shift` while drawing to constrain to a square/circle
 - **Pen / bézier paths** — click to drop corner anchors, click-drag to pull smooth bézier handles, click the first anchor to close; finish with `Enter`, double-click, or `Esc`. Paths are a structured anchor model, so the SVG `d` is always derived, never hand-edited
 - **Path point editing** — a lone selected pen path gets Illustrator-style node chrome: drag anchors and control points to reshape (the opposite handle mirrors for smoothness; `Alt` breaks the pair), double-click an anchor to delete it or a control point to retract it — all under any rotation
 - **Closed-path extras** — flip a closed path between **Edit points** and **Convert to shape** (get a normal bbox with resize + rotate, non-destructively), and dial in a **corner radius** that fillets its hard corners live
@@ -21,7 +21,7 @@ A tiny, zero-dependency SVG editor that runs in the browser. Draw primitives, ar
 - **Grouping** — `Ctrl+G` / `Ctrl+Shift+G`
 - **Layers panel** — drag rows to reorder within a parent, plus right-click ordering (bring to front / send to back / forward / backward) and collapse/expand groups
 - **Labels on shapes & connectors** — double-click any shape or connector to type a centered label; labels travel with the object on export
-- **Properties panel** — fill, stroke, stroke width, opacity (slider + number), rotation, font family/size/color, connector routing/arrows, and closed-path shape/corner-radius controls; collapsible Layers and SVG-source sections
+- **Properties panel** — fill, stroke, stroke width, **stroke style (dash / line cap / line join)**, opacity (slider + number), rotation, font family/size/color, **bold / italic / text-align**, **rectangle corner radius**, connector routing/arrows, and closed-path shape/corner-radius controls; collapsible Layers and SVG-source sections
 - **Save / open / autosave** — lossless native `.euclid.json` format (`Ctrl+S` / `Ctrl+O`) that round-trips everything, with debounced autosave to `localStorage` and silent restore on reload
 - **Live SVG source** — always-current source pane with Copy / Download / tight-viewBox toggle
 - **Import** — paste SVG markup; supports Adobe Illustrator exports (class-based `<style>` inlining, `matrix()` transforms that decompose to translate + rotation)

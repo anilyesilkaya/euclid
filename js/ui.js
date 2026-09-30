@@ -42,6 +42,16 @@ let pConnectorRoute, connectorDivider, connectorRouteRow;
 let pArrowStart, pArrowEnd, connectorArrowStartRow, connectorArrowEndRow;
 let pathDivider, pShapeToggle, pathCornerRow, pCornerRadius, pCornerRadiusNum;
 let rectDivider, rectCornerRow, pRectRadius, pRectRadiusNum;
+let pStrokeDash, pStrokeCap, pStrokeJoin, strokeDashRow, strokeCapRow, strokeJoinRow;
+let pBold, pItalic, textStyleRow, textAlignRow, alignTextBtns;
+
+// Dash presets ↔ SVG stroke-dasharray. "none" is solid (attr suppressed on export).
+const DASH_PRESETS = { none: "none", dashed: "6 4", dotted: "1 3" };
+function dashPresetOf(v) {
+  if (!v || v === "none") return "none";
+  if (v === DASH_PRESETS.dotted) return "dotted";
+  return "dashed"; // any other pattern reads as a generic dash
+}
 let pFillType, pStrokeType, fillNoneRow, strokeNoneRow;
 let gradEditors = {}; // slot -> { root, preview, angle, angleNum, stops, add }
 let clipboard = null;
@@ -262,6 +272,17 @@ function wireProperties(root) {
   rectCornerRow = root.querySelector("#rect-corner-row");
   pRectRadius = root.querySelector("#p-rect-radius");
   pRectRadiusNum = root.querySelector("#p-rect-radius-num");
+  pStrokeDash = root.querySelector("#p-stroke-dash");
+  pStrokeCap = root.querySelector("#p-stroke-cap");
+  pStrokeJoin = root.querySelector("#p-stroke-join");
+  strokeDashRow = root.querySelector("#stroke-dash-row");
+  strokeCapRow = root.querySelector("#stroke-cap-row");
+  strokeJoinRow = root.querySelector("#stroke-join-row");
+  pBold = root.querySelector("#p-bold");
+  pItalic = root.querySelector("#p-italic");
+  textStyleRow = root.querySelector("#text-style-row");
+  textAlignRow = root.querySelector("#text-align-row");
+  alignTextBtns = [...root.querySelectorAll(".align-text")];
   pFillType = root.querySelector("#p-fill-type");
   pStrokeType = root.querySelector("#p-stroke-type");
   fillNoneRow = root.querySelector("#fill-none-row");
@@ -276,6 +297,11 @@ function wireProperties(root) {
   pStrokeNone.addEventListener("change", () => historyRecord(() => applyToSelection("stroke", pStrokeNone.checked ? "none" : pStroke.value)));
   pStrokeWidth.addEventListener("input", () => applyToSelection("stroke-width", Number(pStrokeWidth.value)));
   pStrokeWidth.addEventListener("change", () => historyCommitAfter(() => applyToSelection("stroke-width", Number(pStrokeWidth.value))));
+
+  // Stroke style: dash pattern, line cap, line join. Each is one history entry.
+  pStrokeDash.addEventListener("change", () => historyRecord(() => applyToSelection("stroke-dasharray", DASH_PRESETS[pStrokeDash.value] || "none")));
+  pStrokeCap.addEventListener("change", () => historyRecord(() => applyToSelection("stroke-linecap", pStrokeCap.value)));
+  pStrokeJoin.addEventListener("change", () => historyRecord(() => applyToSelection("stroke-linejoin", pStrokeJoin.value)));
   pOpacity.addEventListener("input", () => {
     pOpacityNum.value = pOpacity.value;
     applyToSelection("opacity", Number(pOpacity.value));
@@ -316,6 +342,21 @@ function wireProperties(root) {
   pFontSize.addEventListener("pointerdown", () => history.beginTransaction());
 
   pFontFamily.addEventListener("change", () => historyRecord(() => applyFontFamily(pFontFamily.value)));
+
+  // Font weight / style toggles (Bold, Italic) — apply to text nodes and shape
+  // labels. Toggle off the pressed state; the button's aria-pressed drives it.
+  pBold.addEventListener("click", () => {
+    const on = pBold.getAttribute("aria-pressed") !== "true";
+    historyRecord(() => applyFontProp("font-weight", on ? "bold" : "normal"));
+  });
+  pItalic.addEventListener("click", () => {
+    const on = pItalic.getAttribute("aria-pressed") !== "true";
+    historyRecord(() => applyFontProp("font-style", on ? "italic" : "normal"));
+  });
+  // Text align (text-anchor) — standalone text nodes only.
+  for (const b of alignTextBtns) {
+    b.addEventListener("click", () => historyRecord(() => applyTextAnchor(b.dataset.anchor)));
+  }
 
   // Connector routing style (Straight / Orthogonal). One history entry per change.
   pConnectorRoute.addEventListener("change", () => historyRecord(() => applyConnectorRoute(pConnectorRoute.value)));
@@ -443,6 +484,43 @@ function applyFontFamily(value) {
       } else if (n.label) {
         n.labelStyle = { ...(n.labelStyle || {}), "font-family": value };
       }
+    }
+  });
+}
+
+// Set a font property (font-weight / font-style) on text nodes and shape labels.
+// "normal" is the SVG default, so clear the attr rather than storing it.
+function applyFontProp(key, value) {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  const isDefault = value === "normal";
+  mutate((root) => {
+    for (const id of ids) {
+      const n = findNode(root, id);
+      if (!n) continue;
+      if (n.type === "text") {
+        if (isDefault) delete n.attrs[key];
+        else n.attrs[key] = value;
+      } else if (n.label) {
+        const ls = { ...(n.labelStyle || {}) };
+        if (isDefault) delete ls[key];
+        else ls[key] = value;
+        n.labelStyle = ls;
+      }
+    }
+  });
+}
+
+// Set text-anchor on standalone text nodes. "start" is the default (clear it).
+function applyTextAnchor(anchor) {
+  const ids = [...getSelection()];
+  if (ids.length === 0) return;
+  mutate((root) => {
+    for (const id of ids) {
+      const n = findNode(root, id);
+      if (!n || n.type !== "text") continue;
+      if (anchor === "start") delete n.attrs["text-anchor"];
+      else n.attrs["text-anchor"] = anchor;
     }
   });
 }
@@ -933,28 +1011,52 @@ export function refreshPropertyPanel() {
   pOpacity.value = op;
   pOpacityNum.value = round2(op);
 
+  // Stroke style — reflect the sample's dash preset, cap, and join. These rows
+  // are meaningless when the stroke is off, so hide them for a strokeless sample.
+  const hasStroke = stroke !== "none";
+  if (strokeDashRow) strokeDashRow.hidden = !hasStroke;
+  if (strokeCapRow) strokeCapRow.hidden = !hasStroke;
+  if (strokeJoinRow) strokeJoinRow.hidden = !hasStroke;
+  if (hasStroke) {
+    pStrokeDash.value = dashPresetOf(sample.attrs["stroke-dasharray"]);
+    pStrokeCap.value = sample.attrs["stroke-linecap"] || "butt";
+    pStrokeJoin.value = sample.attrs["stroke-linejoin"] || "miter";
+  }
+
   // Rotation — read from the first selected node's transform. Don't clobber the
   // field while the user is typing in it (refresh fires on every live-preview mutate).
   const firstSel = findNode(doc, ids[0]);
   const rot = firstSel?.transform?.rot || 0;
   if (document.activeElement !== pRotation) pRotation.value = normalizeAngle(rot) ?? 0;
 
-  // Text fields — read from the first selected node.
+  // Text fields — read from the first selected node. Font style/weight live in
+  // attrs for text nodes, labelStyle for shape labels; text-anchor (align) is a
+  // text-node-only concept, so its row shows only for a text node.
   const firstId = [...getSelection()][0];
   const firstNode = firstId ? findNode(doc, firstId) : null;
   if (!firstNode) return;
-  if (firstNode.type === "text") {
+  const isText = firstNode.type === "text";
+  const src = isText ? firstNode.attrs : (firstNode.labelStyle || {});
+  if (isText) {
     pText.value = firstNode.text ?? "";
     pFontSize.value = firstNode.attrs["font-size"] ?? 20;
     pFontFamily.value = firstNode.attrs["font-family"] ?? "sans-serif";
     pTextColor.value = normalizeColor(firstNode.attrs.fill, "#000000");
   } else {
     pText.value = firstNode.label ?? "";
-    const ls = firstNode.labelStyle || {};
-    pFontSize.value = ls["font-size"] ?? 16;
-    pFontFamily.value = ls["font-family"] ?? "sans-serif";
-    pTextColor.value = normalizeColor(ls.fill, "#000000");
+    pFontSize.value = src["font-size"] ?? 16;
+    pFontFamily.value = src["font-family"] ?? "sans-serif";
+    pTextColor.value = normalizeColor(src.fill, "#000000");
   }
+  // Bold / italic pressed state (applies to both text nodes and labels).
+  const isBold = String(src["font-weight"] ?? "") === "bold" || Number(src["font-weight"]) >= 600;
+  const isItalic = String(src["font-style"] ?? "") === "italic";
+  pBold.setAttribute("aria-pressed", String(isBold));
+  pItalic.setAttribute("aria-pressed", String(isItalic));
+  // Align row: text nodes only; reflect the current anchor.
+  if (textAlignRow) textAlignRow.hidden = !isText;
+  const anchor = isText ? (firstNode.attrs["text-anchor"] || "start") : "start";
+  for (const b of alignTextBtns) b.setAttribute("aria-pressed", String(b.dataset.anchor === anchor));
 }
 
 function firstShape(node) {

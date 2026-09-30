@@ -553,6 +553,8 @@
     t.setAttribute("font-family", style["font-family"] || "sans-serif");
     t.setAttribute("font-size", style["font-size"] || 16);
     t.setAttribute("fill", style.fill || "#000000");
+    if (style["font-weight"]) t.setAttribute("font-weight", style["font-weight"]);
+    if (style["font-style"]) t.setAttribute("font-style", style["font-style"]);
     t.setAttribute("stroke", "#ffffff");
     t.setAttribute("stroke-width", 3);
     t.setAttribute("stroke-linejoin", "round");
@@ -663,6 +665,8 @@
     t.setAttribute("font-family", ownerNode.labelStyle?.["font-family"] || "sans-serif");
     t.setAttribute("font-size", ownerNode.labelStyle?.["font-size"] || 16);
     t.setAttribute("fill", ownerNode.labelStyle?.fill || "#000000");
+    if (ownerNode.labelStyle?.["font-weight"]) t.setAttribute("font-weight", ownerNode.labelStyle["font-weight"]);
+    if (ownerNode.labelStyle?.["font-style"]) t.setAttribute("font-style", ownerNode.labelStyle["font-style"]);
     t.setAttribute("pointer-events", "none");
     t.textContent = ownerNode.label;
     return t;
@@ -3379,6 +3383,23 @@
   var rectCornerRow;
   var pRectRadius;
   var pRectRadiusNum;
+  var pStrokeDash;
+  var pStrokeCap;
+  var pStrokeJoin;
+  var strokeDashRow;
+  var strokeCapRow;
+  var strokeJoinRow;
+  var pBold;
+  var pItalic;
+  var textStyleRow;
+  var textAlignRow;
+  var alignTextBtns;
+  var DASH_PRESETS = { none: "none", dashed: "6 4", dotted: "1 3" };
+  function dashPresetOf(v) {
+    if (!v || v === "none") return "none";
+    if (v === DASH_PRESETS.dotted) return "dotted";
+    return "dashed";
+  }
   var pFillType;
   var pStrokeType;
   var fillNoneRow;
@@ -3582,6 +3603,17 @@
     rectCornerRow = root.querySelector("#rect-corner-row");
     pRectRadius = root.querySelector("#p-rect-radius");
     pRectRadiusNum = root.querySelector("#p-rect-radius-num");
+    pStrokeDash = root.querySelector("#p-stroke-dash");
+    pStrokeCap = root.querySelector("#p-stroke-cap");
+    pStrokeJoin = root.querySelector("#p-stroke-join");
+    strokeDashRow = root.querySelector("#stroke-dash-row");
+    strokeCapRow = root.querySelector("#stroke-cap-row");
+    strokeJoinRow = root.querySelector("#stroke-join-row");
+    pBold = root.querySelector("#p-bold");
+    pItalic = root.querySelector("#p-italic");
+    textStyleRow = root.querySelector("#text-style-row");
+    textAlignRow = root.querySelector("#text-align-row");
+    alignTextBtns = [...root.querySelectorAll(".align-text")];
     pFillType = root.querySelector("#p-fill-type");
     pStrokeType = root.querySelector("#p-stroke-type");
     fillNoneRow = root.querySelector("#fill-none-row");
@@ -3595,6 +3627,9 @@
     pStrokeNone.addEventListener("change", () => historyRecord(() => applyToSelection("stroke", pStrokeNone.checked ? "none" : pStroke.value)));
     pStrokeWidth.addEventListener("input", () => applyToSelection("stroke-width", Number(pStrokeWidth.value)));
     pStrokeWidth.addEventListener("change", () => historyCommitAfter(() => applyToSelection("stroke-width", Number(pStrokeWidth.value))));
+    pStrokeDash.addEventListener("change", () => historyRecord(() => applyToSelection("stroke-dasharray", DASH_PRESETS[pStrokeDash.value] || "none")));
+    pStrokeCap.addEventListener("change", () => historyRecord(() => applyToSelection("stroke-linecap", pStrokeCap.value)));
+    pStrokeJoin.addEventListener("change", () => historyRecord(() => applyToSelection("stroke-linejoin", pStrokeJoin.value)));
     pOpacity.addEventListener("input", () => {
       pOpacityNum.value = pOpacity.value;
       applyToSelection("opacity", Number(pOpacity.value));
@@ -3629,6 +3664,17 @@
     pFontSize.addEventListener("change", () => historyCommitAfter(() => applyFontSize(Number(pFontSize.value))));
     pFontSize.addEventListener("pointerdown", () => beginTransaction());
     pFontFamily.addEventListener("change", () => historyRecord(() => applyFontFamily(pFontFamily.value)));
+    pBold.addEventListener("click", () => {
+      const on = pBold.getAttribute("aria-pressed") !== "true";
+      historyRecord(() => applyFontProp("font-weight", on ? "bold" : "normal"));
+    });
+    pItalic.addEventListener("click", () => {
+      const on = pItalic.getAttribute("aria-pressed") !== "true";
+      historyRecord(() => applyFontProp("font-style", on ? "italic" : "normal"));
+    });
+    for (const b of alignTextBtns) {
+      b.addEventListener("click", () => historyRecord(() => applyTextAnchor(b.dataset.anchor)));
+    }
     pConnectorRoute.addEventListener("change", () => historyRecord(() => applyConnectorRoute(pConnectorRoute.value)));
     pArrowStart.addEventListener("change", () => historyRecord(() => applyConnectorArrow("arrowStart", pArrowStart.checked)));
     pArrowEnd.addEventListener("change", () => historyRecord(() => applyConnectorArrow("arrowEnd", pArrowEnd.checked)));
@@ -3741,6 +3787,38 @@
         } else if (n.label) {
           n.labelStyle = { ...n.labelStyle || {}, "font-family": value };
         }
+      }
+    });
+  }
+  function applyFontProp(key, value) {
+    const ids = [...getSelection()];
+    if (ids.length === 0) return;
+    const isDefault2 = value === "normal";
+    mutate((root) => {
+      for (const id of ids) {
+        const n = findNode(root, id);
+        if (!n) continue;
+        if (n.type === "text") {
+          if (isDefault2) delete n.attrs[key];
+          else n.attrs[key] = value;
+        } else if (n.label) {
+          const ls = { ...n.labelStyle || {} };
+          if (isDefault2) delete ls[key];
+          else ls[key] = value;
+          n.labelStyle = ls;
+        }
+      }
+    });
+  }
+  function applyTextAnchor(anchor) {
+    const ids = [...getSelection()];
+    if (ids.length === 0) return;
+    mutate((root) => {
+      for (const id of ids) {
+        const n = findNode(root, id);
+        if (!n || n.type !== "text") continue;
+        if (anchor === "start") delete n.attrs["text-anchor"];
+        else n.attrs["text-anchor"] = anchor;
       }
     });
   }
@@ -4179,24 +4257,41 @@
     pStrokeWidth.value = sw;
     pOpacity.value = op;
     pOpacityNum.value = round23(op);
+    const hasStroke = stroke !== "none";
+    if (strokeDashRow) strokeDashRow.hidden = !hasStroke;
+    if (strokeCapRow) strokeCapRow.hidden = !hasStroke;
+    if (strokeJoinRow) strokeJoinRow.hidden = !hasStroke;
+    if (hasStroke) {
+      pStrokeDash.value = dashPresetOf(sample.attrs["stroke-dasharray"]);
+      pStrokeCap.value = sample.attrs["stroke-linecap"] || "butt";
+      pStrokeJoin.value = sample.attrs["stroke-linejoin"] || "miter";
+    }
     const firstSel = findNode(doc2, ids[0]);
     const rot = firstSel?.transform?.rot || 0;
     if (document.activeElement !== pRotation) pRotation.value = normalizeAngle(rot) ?? 0;
     const firstId = [...getSelection()][0];
     const firstNode = firstId ? findNode(doc2, firstId) : null;
     if (!firstNode) return;
-    if (firstNode.type === "text") {
+    const isText = firstNode.type === "text";
+    const src = isText ? firstNode.attrs : firstNode.labelStyle || {};
+    if (isText) {
       pText.value = firstNode.text ?? "";
       pFontSize.value = firstNode.attrs["font-size"] ?? 20;
       pFontFamily.value = firstNode.attrs["font-family"] ?? "sans-serif";
       pTextColor.value = normalizeColor(firstNode.attrs.fill, "#000000");
     } else {
       pText.value = firstNode.label ?? "";
-      const ls = firstNode.labelStyle || {};
-      pFontSize.value = ls["font-size"] ?? 16;
-      pFontFamily.value = ls["font-family"] ?? "sans-serif";
-      pTextColor.value = normalizeColor(ls.fill, "#000000");
+      pFontSize.value = src["font-size"] ?? 16;
+      pFontFamily.value = src["font-family"] ?? "sans-serif";
+      pTextColor.value = normalizeColor(src.fill, "#000000");
     }
+    const isBold = String(src["font-weight"] ?? "") === "bold" || Number(src["font-weight"]) >= 600;
+    const isItalic = String(src["font-style"] ?? "") === "italic";
+    pBold.setAttribute("aria-pressed", String(isBold));
+    pItalic.setAttribute("aria-pressed", String(isItalic));
+    if (textAlignRow) textAlignRow.hidden = !isText;
+    const anchor = isText ? firstNode.attrs["text-anchor"] || "start" : "start";
+    for (const b of alignTextBtns) b.setAttribute("aria-pressed", String(b.dataset.anchor === anchor));
   }
   function firstShape(node) {
     if (node.type !== "group") return node;
@@ -4565,7 +4660,10 @@
     "fill-opacity": 1,
     "stroke-opacity": 1,
     rx: 0,
-    ry: 0
+    ry: 0,
+    "stroke-linecap": "butt",
+    "stroke-linejoin": "miter",
+    "stroke-dasharray": "none"
   };
   function serialize() {
     const doc2 = getDoc();
@@ -4667,6 +4765,8 @@
             `stroke-linejoin="round"`,
             `paint-order="stroke"`
           ];
+          if (style["font-weight"]) lp.push(`font-weight="${escapeXml(String(style["font-weight"]))}"`);
+          if (style["font-style"]) lp.push(`font-style="${escapeXml(String(style["font-style"]))}"`);
           out.push(`${pad}<text ${lp.join(" ")}>${escapeXmlText(String(node.label))}</text>`);
         }
       }
@@ -4712,17 +4812,20 @@
     const cx = bbox.x + bbox.width / 2;
     const cy = bbox.y + bbox.height / 2;
     const style = ownerNode.labelStyle || {};
+    const attrs = {
+      x: cx,
+      y: cy,
+      "text-anchor": "middle",
+      "dominant-baseline": "middle",
+      "font-family": style["font-family"] || "sans-serif",
+      "font-size": style["font-size"] || 16,
+      fill: style.fill || "#000000"
+    };
+    if (style["font-weight"]) attrs["font-weight"] = style["font-weight"];
+    if (style["font-style"]) attrs["font-style"] = style["font-style"];
     return {
       type: "text",
-      attrs: {
-        x: cx,
-        y: cy,
-        "text-anchor": "middle",
-        "dominant-baseline": "middle",
-        "font-family": style["font-family"] || "sans-serif",
-        "font-size": style["font-size"] || 16,
-        fill: style.fill || "#000000"
-      },
+      attrs,
       transform: null,
       text: ownerNode.label
     };
