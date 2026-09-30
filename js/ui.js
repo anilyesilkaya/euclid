@@ -5,7 +5,7 @@ import {
   mutate, newId, findNode, findParent, findPath, walk, removeByIds, emptyTransform,
 } from "./state.js";
 import * as history from "./history.js";
-import { setTool, getTool, cancelPolyline, cancelPen, finishPen, isTextEditing, openLabelEditor } from "./tools.js";
+import { setTool, getTool, cancelPolyline, cancelPen, finishPen, isTextEditing, openLabelEditor, transformAgain } from "./tools.js";
 import { align } from "./align.js";
 import * as persist from "./persist.js";
 import { getGradient, isValidGradient, defaultLinearGradient } from "./paint.js";
@@ -1162,7 +1162,11 @@ function wireKeyboard() {
       selectAll(); e.preventDefault(); return;
     }
     if (mod && e.key.toLowerCase() === "d") {
-      duplicateSelection(); e.preventDefault(); return;
+      // "Transform Again": replay the last move/rotate (re-duplicating if it was a
+      // duplicate-drag). With no transform recorded yet, fall back to a plain
+      // duplicate so Ctrl+D still does the obvious thing on a fresh selection.
+      if (!transformAgain()) duplicateSelection();
+      e.preventDefault(); return;
     }
     if (mod && e.key.toLowerCase() === "c") {
       copySelection(); e.preventDefault(); return;
