@@ -354,12 +354,14 @@ html, body {
   border-left: 1px solid var(--border);
   display: grid;
   /* Rows: props · layers-section · source-section.
-     The props row is minmax(0, auto) — it grows to fit its controls but can
-     shrink below content under space pressure (then #props scrolls internally),
-     so a tall property panel never pushes Layers / SVG source off the bottom.
-     Collapsed sections collapse to their header (auto); the combo classes
-     below pick the row template. Default: source collapsed. */
-  grid-template-rows: minmax(0, auto) minmax(120px, 1fr) minmax(120px, 1fr);
+     #props scrolls internally (min-height:0; overflow-y:auto), so its row can
+     shrink below content and never pushes Layers / SVG source off the bottom.
+     When only one of Layers/Source is flexible (its sibling collapsed), props
+     is minmax(0, auto): it grows to fit its controls. When BOTH are expanded
+     the three compete for height, so props becomes a weighted flexible track
+     (minmax(0, 1.3fr)) that yields space to the two panels instead of grabbing
+     its full content height and starving them. Default: source collapsed. */
+  grid-template-rows: minmax(0, 1.3fr) minmax(120px, 1fr) minmax(120px, 1fr);
   min-width: 0;
   min-height: 0;
 }
