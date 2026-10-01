@@ -13,6 +13,22 @@ const ROT_STEM_LEN = 24;    // px in screen space
 
 let docLayer, chromeHover, chromeSelection, chromeTransient, canvasSvg;
 
+// Whether the Direct Selection tool (Illustrator's white arrow) is active. Gates
+// the path-anchor chrome: a lone pen path shows editable anchors/handles only
+// under Direct Selection, and the normal move/resize bbox under the plain
+// Selection tool (black arrow). tools.js flips this on every tool change.
+let directSelectMode = false;
+
+// Set by tools.js when the active tool changes. Re-decides selection chrome for
+// the current selection so switching Select ⇄ Direct Selection swaps a lone
+// path between bbox handles and anchor/handle joints without a state mutation.
+export function setDirectSelectMode(on) {
+  const next = !!on;
+  if (next === directSelectMode) return;
+  directSelectMode = next;
+  if (chromeSelection) renderSelection();
+}
+
 export function mount(svg) {
   canvasSvg = svg;
   docLayer = svg.querySelector("#doc-layer");
@@ -398,10 +414,11 @@ function renderSelection() {
   }
 
   // A lone selected pen path (structured anchors) gets direct node-editing chrome
-  // — anchor + bézier-handle points — instead of a bbox with resize/rotate handles.
-  // Unless it's in "shape mode" (Convert to shape): then it falls through to the
-  // normal single-selection bbox chrome so it can be resized/rotated like a rect.
-  if (boxes.length === 1) {
+  // — anchor + bézier-handle points — instead of a bbox with resize/rotate handles,
+  // but ONLY under the Direct Selection tool (the white arrow). Under the plain
+  // Selection tool it shows the normal move/resize bbox like any other shape.
+  // "Shape mode" (Convert to shape) always uses the bbox chrome regardless of tool.
+  if (boxes.length === 1 && directSelectMode) {
     const node = findNode(getDoc(), boxes[0].id);
     if (node && node.type === "path" && Array.isArray(node.anchors) && node.anchors.length && !node.shapeMode) {
       drawPathSelection(boxes[0], node);

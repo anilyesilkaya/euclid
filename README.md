@@ -8,7 +8,8 @@ A tiny, zero-dependency SVG editor that runs in the browser. Draw primitives, ar
 
 - **Shapes** — rectangle, rounded rectangle, ellipse, circle, line, polyline, and text. The Rectangle and Ellipse toolbar buttons are **Illustrator-style flyouts** — right-click or press-and-hold to reveal a variant (Rect → Rounded rect, Ellipse → Circle); hold `Shift` while drawing to constrain to a square/circle
 - **Pen / bézier paths** — click to drop corner anchors, click-drag to pull smooth bézier handles, click the first anchor to close; finish with `Enter`, double-click, or `Esc`. Paths are a structured anchor model, so the SVG `d` is always derived, never hand-edited
-- **Path point editing** — a lone selected pen path gets Illustrator-style node chrome: drag anchors and control points to reshape (the opposite handle mirrors for smoothness; `Alt` breaks the pair), double-click an anchor to delete it or a control point to retract it — all under any rotation
+- **Two selection tools** — a **Selection** tool (`V`, solid arrow) that moves, resizes, and rotates whole objects, and a **Direct Selection** tool (`A`, hollow arrow) that edits path anchors. A lone pen path shows a plain move/resize bounding box under Selection and its editable anchor joints under Direct Selection — mirroring Illustrator's two arrows
+- **Path point editing** — with the Direct Selection tool active, a lone selected pen path gets Illustrator-style node chrome: drag anchors and control points to reshape (the opposite handle mirrors for smoothness; `Alt` breaks the pair), double-click an anchor to delete it or a control point to retract it — all under any rotation
 - **Closed-path extras** — flip a closed path between **Edit points** and **Convert to shape** (get a normal bbox with resize + rotate, non-destructively), and dial in a **corner radius** that fillets its hard corners live
 - **Gradients** — set a **linear gradient** as fill or stroke via a Solid / Linear paint-type dropdown; edit angle and multiple color stops (add / recolor / drag offset / delete) with a live preview. Gradients travel through export and import, and are re-associated per shape so duplicate/paste just works
 - **Connectors** — draw an edge between two shapes; it attaches to each shape's bounding box and re-routes automatically as the shapes move, resize, or rotate. Choose **straight** or **orthogonal (elbow)** routing, toggle arrowheads at either end, and add a mid-edge label. Orthogonal connectors are editable — drag a segment to bend it (adds a waypoint), drag a waypoint to move it, double-click to delete. Arrowheads stay a fixed size at any zoom, and deleting an attached shape cleans up its connectors
@@ -53,7 +54,8 @@ fetched over `file://`, the modular sources themselves need a static server — 
 
 | Key | Action |
 |---|---|
-| `V` | Select tool |
+| `V` | Selection tool (move whole objects) |
+| `A` | Direct Selection tool (edit path anchors / joints) |
 | `R` `E` `C` `L` `X` `P` `N` `T` | Rect / Ellipse / Circle / Line / Connector / Polyline / Pen / Text tool |
 | `Esc` | Cancel current tool → Select; also cancels an in-progress polyline or finalizes a pen path |
 | `Enter` | Finish the in-progress pen path |
@@ -63,7 +65,8 @@ fetched over `file://`, the modular sources themselves need a static server — 
 | `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) | Undo / Redo |
 | `Ctrl+A` | Select all top-level nodes |
 | `Ctrl+D` | Transform Again — replay the last move/rotate (re-duplicating if it was a duplicate-drag); plain duplicate if none yet |
-| `Ctrl+C` / `Ctrl+V` | Copy / Paste |
+| `Ctrl+C` / `Ctrl+V` | Copy / Paste (offset +10, +10) |
+| `Ctrl+Shift+V` | Paste in place (exact same location) |
 | `Ctrl+G` / `Ctrl+Shift+G` | Group / Ungroup |
 | `Ctrl+'` / `Ctrl+Shift+'` | Toggle grid / snap-to-grid |
 | `Ctrl +` / `Ctrl -` | Zoom in / out |

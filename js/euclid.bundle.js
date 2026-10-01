@@ -449,6 +449,13 @@
   var chromeSelection;
   var chromeTransient;
   var canvasSvg;
+  var directSelectMode = false;
+  function setDirectSelectMode(on) {
+    const next = !!on;
+    if (next === directSelectMode) return;
+    directSelectMode = next;
+    if (chromeSelection) renderSelection();
+  }
   function mount(svg3) {
     canvasSvg = svg3;
     docLayer = svg3.querySelector("#doc-layer");
@@ -773,7 +780,7 @@
       drawConnectorSelection(boxes[0].id, boxes[0].el);
       return;
     }
-    if (boxes.length === 1) {
+    if (boxes.length === 1 && directSelectMode) {
       const node = findNode(getDoc(), boxes[0].id);
       if (node && node.type === "path" && Array.isArray(node.anchors) && node.anchors.length && !node.shapeMode) {
         drawPathSelection(boxes[0], node);
@@ -1449,12 +1456,16 @@
     cancelPolyline();
     cancelPen();
     currentTool = name;
-    canvasSvg2.classList.toggle("draw-mode", name !== "select");
+    canvasSvg2.classList.toggle("draw-mode", !isSelectTool(name));
+    setDirectSelectMode(name === "directselect");
     setHover(null);
     document.dispatchEvent(new CustomEvent("tool-changed", { detail: name }));
   }
   function getTool() {
     return currentTool;
+  }
+  function isSelectTool(name) {
+    return name === "select" || name === "directselect";
   }
   function onPointerDown(e) {
     if (e.button !== 0) return;
@@ -1468,7 +1479,7 @@
     if (role === "rotate") return startRotate(e, target, p);
     if (role === "waypoint" || role === "waypoint-add") return startWaypointDrag(e, target, p);
     if (role === "path-anchor" || role === "path-handle") return startPathPointDrag(e, target, p);
-    if (currentTool === "select") return handleSelectDown(e, p, target);
+    if (isSelectTool(currentTool)) return handleSelectDown(e, p, target);
     if (currentTool === "polyline") return handlePolylineDown(e, p);
     if (currentTool === "pen") return handlePenDown(e, p);
     if (currentTool === "text") return handleTextDown(e, p);
@@ -1524,7 +1535,7 @@
     }
   }
   function updateHover(e) {
-    if (currentTool !== "select") {
+    if (!isSelectTool(currentTool)) {
       setHover(null);
       return;
     }
@@ -1540,7 +1551,7 @@
     canvasSvg2.classList.toggle("will-duplicate", !!dup);
   }
   function setHover(id) {
-    canvasSvg2.classList.toggle("over-shape", !!id && currentTool === "select");
+    canvasSvg2.classList.toggle("over-shape", !!id && isSelectTool(currentTool));
     if (!id) canvasSvg2.classList.remove("will-duplicate");
     if (id === hoveredId) return;
     hoveredId = id;
@@ -1597,7 +1608,7 @@
   }
   function onContextMenu(e) {
     e.preventDefault();
-    if (currentTool !== "select") {
+    if (!isSelectTool(currentTool)) {
       closeContextMenu();
       return;
     }
@@ -1632,7 +1643,7 @@
       retractPathHandle(e.target.getAttribute("data-id"), Number(e.target.getAttribute("data-index")), e.target.getAttribute("data-which"));
       return;
     }
-    if (currentTool !== "select") return;
+    if (!isSelectTool(currentTool)) return;
     const hit = hitTest(e.target);
     if (!hit) return;
     const node = findNode(getDoc(), hit.id);
@@ -3427,7 +3438,7 @@
   }
 
   // js/ui.js
-  var TOOL_KEYS = { v: "select", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", n: "pen", t: "text", x: "connector" };
+  var TOOL_KEYS = { v: "select", a: "directselect", r: "rect", e: "ellipse", c: "circle", l: "line", p: "polyline", n: "pen", t: "text", x: "connector" };
   var FLYOUT_HOLD_MS = 250;
   var TOOL_ICONS = {
     rect: '<rect x="4" y="6" width="16" height="12" fill="none" stroke="currentColor" stroke-width="2"/>',
@@ -4496,7 +4507,7 @@
         return;
       }
       if (mod && e.key.toLowerCase() === "v") {
-        pasteClipboard();
+        pasteClipboard(...e.shiftKey ? [0, 0] : [10, 10]);
         e.preventDefault();
         return;
       }
@@ -4619,7 +4630,7 @@
     }
     clipboard = nodes;
   }
-  function pasteClipboard() {
+  function pasteClipboard(dx = 10, dy = 10) {
     if (!clipboard || clipboard.length === 0) return;
     const newIds = [];
     record(() => {
@@ -4627,8 +4638,8 @@
         for (const src of clipboard) {
           const copy = deepReId2(src);
           if (!copy.transform) copy.transform = emptyTransform();
-          copy.transform.tx = (copy.transform.tx || 0) + 10;
-          copy.transform.ty = (copy.transform.ty || 0) + 10;
+          copy.transform.tx = (copy.transform.tx || 0) + dx;
+          copy.transform.ty = (copy.transform.ty || 0) + dy;
           root.children.push(copy);
           newIds.push(copy.id);
         }

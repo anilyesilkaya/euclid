@@ -6,7 +6,7 @@ import {
   mutate, newId, emptyTransform, findNode, findPath, topAncestor, walk,
 } from "./state.js";
 import * as history from "./history.js";
-import { toCanvasPoint, toLocalPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix, setHoverOutline, clearHoverOutline, resolveConnector, connectorMidpoint, canvasPixelScale } from "./render.js";
+import { toCanvasPoint, toLocalPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix, setHoverOutline, clearHoverOutline, resolveConnector, connectorMidpoint, canvasPixelScale, setDirectSelectMode } from "./render.js";
 import * as guides from "./guides.js";
 import * as grid from "./grid.js";
 import { routeStraight } from "./connectors.js";
@@ -76,11 +76,21 @@ export function setTool(name) {
   cancelPolyline();
   cancelPen();
   currentTool = name;
-  canvasSvg.classList.toggle("draw-mode", name !== "select");
+  // Both selection tools (Select, Direct Selection) are pointer/arrow tools — the
+  // crosshair "draw-mode" cursor is only for shape-creating tools.
+  canvasSvg.classList.toggle("draw-mode", !isSelectTool(name));
+  // Direct Selection swaps a lone path's chrome to editable anchors/handles.
+  setDirectSelectMode(name === "directselect");
   setHover(null); // hover highlight is a select-tool affordance
   document.dispatchEvent(new CustomEvent("tool-changed", { detail: name }));
 }
 export function getTool() { return currentTool; }
+
+// The two arrow tools that select + move objects (vs. shape-creating tools).
+// Direct Selection shares Select's click/marquee/move behavior; it only differs
+// in the chrome it shows for a lone pen path (editable anchors) and that path
+// anchors are draggable under it.
+function isSelectTool(name) { return name === "select" || name === "directselect"; }
 
 // --- Pointer handlers ---
 
@@ -102,7 +112,7 @@ function onPointerDown(e) {
   if (role === "waypoint" || role === "waypoint-add") return startWaypointDrag(e, target, p);
   if (role === "path-anchor" || role === "path-handle") return startPathPointDrag(e, target, p);
 
-  if (currentTool === "select") return handleSelectDown(e, p, target);
+  if (isSelectTool(currentTool)) return handleSelectDown(e, p, target);
 
   // Draw tools
   if (currentTool === "polyline") return handlePolylineDown(e, p);
@@ -171,7 +181,7 @@ function onPointerMove(e) {
 
 // Hover highlight + cursor feedback while idle with the select tool.
 function updateHover(e) {
-  if (currentTool !== "select") { setHover(null); return; }
+  if (!isSelectTool(currentTool)) { setHover(null); return; }
   const role = e.target.getAttribute && e.target.getAttribute("data-role");
   if (role === "resize" || role === "resize-multi" || role === "rotate" ||
       role === "waypoint" || role === "waypoint-add" ||
@@ -184,7 +194,7 @@ function updateHover(e) {
 }
 
 function setHover(id) {
-  canvasSvg.classList.toggle("over-shape", !!id && currentTool === "select");
+  canvasSvg.classList.toggle("over-shape", !!id && isSelectTool(currentTool));
   if (!id) canvasSvg.classList.remove("will-duplicate");
   if (id === hoveredId) return;
   hoveredId = id;
@@ -246,8 +256,8 @@ function onPointerUp(e) {
 
 function onContextMenu(e) {
   e.preventDefault();
-  // Only meaningful with the select tool active.
-  if (currentTool !== "select") { closeContextMenu(); return; }
+  // Only meaningful with a selection (arrow) tool active.
+  if (!isSelectTool(currentTool)) { closeContextMenu(); return; }
   const hit = hitTest(e.target);
   if (!hit) { closeContextMenu(); return; }
   const id = pickSelectionId(hit.id);
@@ -285,7 +295,7 @@ function onDoubleClick(e) {
     retractPathHandle(e.target.getAttribute("data-id"), Number(e.target.getAttribute("data-index")), e.target.getAttribute("data-which"));
     return;
   }
-  if (currentTool !== "select") return;
+  if (!isSelectTool(currentTool)) return;
   const hit = hitTest(e.target);
   if (!hit) return;
   const node = findNode(getDoc(), hit.id);

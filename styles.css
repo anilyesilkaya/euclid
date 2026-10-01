@@ -353,16 +353,21 @@ html, body {
   background: var(--panel);
   border-left: 1px solid var(--border);
   display: grid;
-  /* Rows: props (auto) · layers-section · source-section.
-     Collapsed sections collapse to their header (auto); the combo classes
-     below pick the row template. Default: source collapsed. */
-  grid-template-rows: auto minmax(120px, 1fr) minmax(120px, 1fr);
+  /* Rows: props · layers-section · source-section.
+     #props scrolls internally (min-height:0; overflow-y:auto), so its row can
+     shrink below content and never pushes Layers / SVG source off the bottom.
+     When only one of Layers/Source is flexible (its sibling collapsed), props
+     is minmax(0, auto): it grows to fit its controls. When BOTH are expanded
+     the three compete for height, so props becomes a weighted flexible track
+     (minmax(0, 1.3fr)) that yields space to the two panels instead of grabbing
+     its full content height and starving them. Default: source collapsed. */
+  grid-template-rows: minmax(0, 1.3fr) minmax(120px, 1fr) minmax(120px, 1fr);
   min-width: 0;
   min-height: 0;
 }
-#side.layers-collapsed:not(.source-collapsed) { grid-template-rows: auto auto minmax(120px, 1fr); }
-#side:not(.layers-collapsed).source-collapsed { grid-template-rows: auto minmax(120px, 1fr) auto; }
-#side.layers-collapsed.source-collapsed       { grid-template-rows: auto auto auto; }
+#side.layers-collapsed:not(.source-collapsed) { grid-template-rows: minmax(0, auto) auto minmax(120px, 1fr); }
+#side:not(.layers-collapsed).source-collapsed { grid-template-rows: minmax(0, auto) minmax(120px, 1fr) auto; }
+#side.layers-collapsed.source-collapsed       { grid-template-rows: minmax(0, 1fr) auto auto; }
 #side h2 {
   font-size: 11px;
   font-weight: 600;
@@ -406,6 +411,11 @@ html, body {
 #props {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
+  /* Scroll internally instead of overflowing the sidebar: when the panel is
+     taller than its grid row, the extra controls scroll here rather than
+     pushing the Layers / SVG-source sections off the bottom. */
+  min-height: 0;
+  overflow-y: auto;
 }
 #props .empty {
   color: var(--text-dim);
