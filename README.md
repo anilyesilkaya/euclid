@@ -1,123 +1,544 @@
 # Euclid
 
-A tiny, zero-dependency SVG editor that runs in the browser. Draw primitives, arrange them, edit properties, and copy or download the clean SVG source — no build step, no framework, no server-side anything.
+**A lightweight vector and diagram editor for humans and AI agents.**
 
-**Live demo: [euclid.yesilkaya.dev](https://euclid.yesilkaya.dev)**
+Create technical diagrams and illustrations, edit SVG visually, and export clean, portable SVG — with no account, backend, framework, or runtime dependencies.
+
+**Live demo:** [euclid.yesilkaya.dev](https://euclid.yesilkaya.dev)
+
+Euclid is designed for the space between a diagramming tool and a general-purpose vector editor: structured diagrams, technical illustrations, block diagrams, figures, and other SVG graphics that should remain easy to understand, edit, version, and reuse.
+
+The long-term direction is to make the same structured graphics model available to both humans through the browser UI and LLMs through an MCP server.
+
+---
+
+## Why Euclid?
+
+There are already excellent vector editors and diagramming tools. Euclid is not intended to reproduce all of Illustrator, Figma, Inkscape, or diagrams.net.
+
+Instead, it focuses on a smaller problem:
+
+> **How quickly can you create a clean, editable technical SVG without opening a heavyweight design application?**
+
+Euclid prioritizes:
+
+- **Clean SVG output** — your drawing remains portable and inspectable.
+- **Structured graphics** — shapes, paths, connectors, groups, gradients, and transforms are represented explicitly instead of being treated as opaque pixels.
+- **Direct manipulation** — familiar selection, resize, rotate, anchor editing, alignment, grouping, and snapping.
+- **Technical diagrams** — first-class connectors, labels, orthogonal routing, alignment, and distribution.
+- **Local-first operation** — no account, cloud service, or server is required.
+- **A small architecture** — the browser application has no runtime framework dependencies.
+- **AI-ready semantics** — the document model is designed so an LLM can eventually manipulate the same objects as a human editor rather than generating raw SVG strings.
+
+---
 
 ## Features
 
-- **Shapes** — rectangle, rounded rectangle, ellipse, circle, line, polyline, and text. The Rectangle and Ellipse toolbar buttons are **Illustrator-style flyouts** — right-click or press-and-hold to reveal a variant (Rect → Rounded rect, Ellipse → Circle); hold `Shift` while drawing to constrain to a square/circle
-- **Pen / bézier paths** — click to drop corner anchors, click-drag to pull smooth bézier handles, click the first anchor to close; finish with `Enter`, double-click, or `Esc`. Paths are a structured anchor model, so the SVG `d` is always derived, never hand-edited
-- **Two selection tools** — a **Selection** tool (`V`, solid arrow) that moves, resizes, and rotates whole objects, and a **Direct Selection** tool (`A`, hollow arrow) that edits anchors. Under Direct Selection a lone object shows a draggable joint at every anchor instead of the move/resize bounding box — mirroring Illustrator's two arrows. This works on *any* shape: a rect, ellipse, circle, line, or polyline shows its joints, and dragging one converts it into an editable path (one-way, like Illustrator), so you can push a rectangle's corner into a quadrilateral or pull an ellipse out of round
-- **Path point editing** — with the Direct Selection tool active, a lone selected path gets Illustrator-style node chrome: drag anchors and control points to reshape (the opposite handle mirrors for smoothness; `Alt` breaks the pair), double-click an anchor to delete it or a control point to retract it — all under any rotation
-- **Closed-path extras** — flip a closed path between **Edit points** and **Convert to shape** (get a normal bbox with resize + rotate, non-destructively), and dial in a **corner radius** that fillets its hard corners live
-- **Gradients** — set a **linear gradient** as fill or stroke via a Solid / Linear paint-type dropdown; edit angle and multiple color stops (add / recolor / drag offset / delete) with a live preview. Gradients travel through export and import, and are re-associated per shape so duplicate/paste just works
-- **Connectors** — draw an edge between two shapes; it attaches to each shape's bounding box and re-routes automatically as the shapes move, resize, or rotate. Choose **straight** or **orthogonal (elbow)** routing, toggle arrowheads at either end, and add a mid-edge label. Orthogonal connectors are editable — drag a segment to bend it (adds a waypoint), drag a waypoint to move it, double-click to delete. Arrowheads stay a fixed size at any zoom, and deleting an attached shape cleans up its connectors
-- **Direct manipulation** — move, resize (8 handles), rotate; resizing a group or multi-selection scales the whole set about the union bbox's fixed anchor
-- **Selection** — click, shift-click, and drag-marquee, with group descent on double-click
-- **Smart alignment guides** — Figma/PowerPoint-style edge and center snapping to nearby objects and the canvas
-- **Grid & snap-to-grid** — toggleable document-space grid with independent snap-to-grid; both persist across sessions
-- **Zoom & pan** — Ctrl/⌘+wheel to zoom at the cursor, two-finger/middle-mouse/Space-drag to pan, plus zoom controls with Fit and a click-to-reset readout
-- **Alignment & distribution** — 6 align ops plus horizontal/vertical distribute
-- **Grouping** — `Ctrl+G` / `Ctrl+Shift+G`
-- **Layers panel** — drag rows to reorder within a parent, plus right-click ordering (bring to front / send to back / forward / backward) and collapse/expand groups
-- **Labels on shapes & connectors** — double-click any shape or connector to type a centered label; labels travel with the object on export
-- **Properties panel** — fill, stroke, stroke width, **stroke style (dash / line cap / line join)**, opacity (slider + number), rotation, font family/size/color, **bold / italic / text-align**, **rectangle corner radius**, connector routing/arrows, and closed-path shape/corner-radius controls; collapsible Layers and SVG-source sections
-- **Save / open / autosave** — lossless native `.euclid.json` format (`Ctrl+S` / `Ctrl+O`) that round-trips everything, with debounced autosave to `localStorage` and silent restore on reload
-- **Live SVG source** — always-current source pane with Copy / Download / tight-viewBox toggle
-- **Import** — paste SVG markup; supports Adobe Illustrator exports (class-based `<style>` inlining, `matrix()` transforms that decompose to translate + rotation)
-- **Undo/redo** — one entry per gesture, up to 200 steps
+### Drawing
+
+- Rectangle
+- Rounded rectangle
+- Ellipse
+- Circle
+- Line
+- Polyline
+- Text
+- Pen / Bézier paths
+- Straight and orthogonal connectors
+
+Hold `Shift` while drawing to constrain rectangles and ellipses to squares and circles, or lines to 45° increments.
+
+### Vector editing
+
+Euclid provides two Illustrator-style selection modes:
+
+- **Selection (`V`)** — move, resize, and rotate whole objects.
+- **Direct Selection (`A`)** — edit path anchors and Bézier handles.
+
+Under the Direct Selection tool, a single selected object hides its move/resize bounding box and instead shows a draggable joint at every anchor — mirroring Illustrator's two arrows. This works on *any* shape, not just pen paths: a rectangle, ellipse, circle, line, or polyline shows its joints too, and dragging one converts the primitive into an editable path (one-way, as in Illustrator). So you can push a rectangle's corner to make a quadrilateral, or pull an ellipse out of round.
+
+Pen paths use a structured anchor model. SVG path data is derived from that model rather than being manually edited as a raw `d` string.
+
+You can:
+
+- Drag anchors and control points
+- Break smooth handle pairs with `Alt`
+- Delete anchors and handles
+- Convert closed paths between point-editing and shape-style manipulation
+- Apply live corner rounding to closed paths
+
+### Diagramming
+
+Connectors are first-class objects rather than static lines.
+
+They can:
+
+- Attach to shapes
+- Re-route when shapes move or resize
+- Use straight or orthogonal routing
+- Carry arrowheads
+- Carry labels
+- Use editable orthogonal waypoints
+
+This makes Euclid suitable for architecture diagrams, signal-processing chains, flow diagrams, block diagrams, and technical documentation.
+
+### Layout and manipulation
+
+- Move, resize, and rotate
+- Multi-selection
+- Marquee selection
+- Group / ungroup
+- Alignment and distribution
+- Smart alignment guides
+- Grid and snap-to-grid
+- Layer reordering
+- Zoom and pan
+- Transform Again (`Ctrl+D`)
+- Duplicate while moving or rotating
+
+### Styling
+
+- Fill and stroke
+- Linear gradients
+- Opacity
+- Stroke width
+- Dash styles
+- Line caps
+- Line joins
+- Rectangle corner radius
+- Font family
+- Font size
+- Font color
+- Bold / italic
+- Text alignment
+
+### Persistence
+
+Euclid has two complementary formats:
+
+#### `.euclid.json`
+
+The native format preserves the complete editable document model.
+
+Use it when you want a lossless round trip back into Euclid.
+
+#### SVG
+
+SVG is the portable output format.
+
+Euclid provides:
+
+- Always-current SVG source
+- Copy SVG
+- Download SVG
+- Tight `viewBox` export
+- SVG import
+
+---
+
+## Human + AI graphics
+
+Euclid is being designed so that humans and LLM agents can eventually manipulate the same graphics model.
+
+The intended architecture is:
+
+```text
+                    Human
+                      │
+                      ▼
+               ┌─────────────┐
+               │  Euclid UI  │
+               └──────┬──────┘
+                      │
+                      ▼
+              ┌───────────────┐
+              │ Euclid model  │
+              │               │
+              │ shapes        │
+              │ paths         │
+              │ connectors    │
+              │ groups        │
+              │ gradients     │
+              │ transforms    │
+              └───────┬───────┘
+                      │
+            ┌─────────┴─────────┐
+            ▼                   ▼
+      SVG renderer          MCP server
+                                │
+                                ▼
+                       LLMs and AI agents
+```
+
+The goal is **not** to ask an LLM to generate a large opaque SVG string.
+
+Instead, an agent should be able to perform structured operations such as:
+
+```json
+{
+  "operations": [
+    {
+      "op": "create_rectangle",
+      "x": 100,
+      "y": 100,
+      "width": 180,
+      "height": 80,
+      "label": "Transmitter"
+    },
+    {
+      "op": "create_rectangle",
+      "x": 400,
+      "y": 100,
+      "width": 180,
+      "height": 80,
+      "label": "Receiver"
+    },
+    {
+      "op": "connect",
+      "from": "Transmitter",
+      "to": "Receiver",
+      "route": "orthogonal",
+      "label": "Channel"
+    }
+  ]
+}
+```
+
+The result remains a normal Euclid document that a human can continue editing visually.
+
+### Planned MCP interface
+
+The MCP server is not yet part of the current release.
+
+The intended API is deliberately small and semantic, for example:
+
+```text
+euclid.create_document()
+euclid.get_document()
+
+euclid.apply_operations(...)
+euclid.find_objects(...)
+euclid.inspect_selection(...)
+
+euclid.import_svg(...)
+euclid.export_svg(...)
+euclid.render_preview(...)
+```
+
+Rather than exposing every toolbar action as a separate MCP tool, `apply_operations(...)` can support typed operations such as:
+
+```text
+create
+delete
+move
+resize
+rotate
+style
+set_text
+connect
+disconnect
+group
+ungroup
+align
+distribute
+edit_path
+```
+
+This keeps the interface compact while preserving the meaning of the drawing.
+
+---
+
+## Architecture
+
+Euclid keeps one authoritative document tree in `state.js`.
+
+Every other subsystem reads from that tree.
+
+```text
+                       ┌──────────────┐
+                       │  state.js    │
+                       │ document tree│
+                       └───────┬──────┘
+                               │
+          ┌────────────────────┼────────────────────┐
+          │                    │                    │
+          ▼                    ▼                    ▼
+      render.js              ui.js              export.js
+          │
+          ├── paths.js
+          ├── paint.js
+          ├── connectors.js
+          ├── guides.js
+          └── grid.js
+```
+
+All document mutations pass through `mutate(fn)`:
+
+```js
+export function mutate(fn) {
+  const draft = structuredClone(doc);
+  fn(draft);
+  doc = draft;
+  notify();
+}
+```
+
+This is intentionally simple.
+
+For the small-to-medium technical drawings Euclid targets, clarity of the model is more important than building a complex incremental graphics engine prematurely.
+
+### Derived data
+
+A recurring architectural principle in Euclid is:
+
+> **Store semantic information; derive rendering information.**
+
+Examples:
+
+- Bézier paths store anchors; SVG `d` is derived.
+- Gradients live in the object model; `<linearGradient>` definitions are derived.
+- Connectors store relationships and waypoints; connector geometry is derived from the current shapes.
+- SVG is an output representation, not the application's internal source of truth.
+
+This same principle is intended to underpin the MCP interface.
+
+---
 
 ## Getting started
 
-Just open `index.html` in a browser — double-click it or drag it onto a browser
-window. No server required. The page loads a prebuilt bundle (`js/euclid.bundle.js`),
-which works over the `file://` protocol.
-
-Requires a modern browser (`structuredClone`, `crypto.randomUUID`).
-
-### Editing the source
-
-The source of truth is the modular `js/*.js` files. `index.html` loads the bundled
-output, so after changing any module, rebuild it:
+Clone the repository:
 
 ```bash
-npm install      # once, installs esbuild
-npm run build    # regenerate js/euclid.bundle.js
+git clone https://github.com/anilyesilkaya/euclid.git
+cd euclid
 ```
 
-Use `npm run watch` to rebuild automatically on save. (Because ES modules can't be
-fetched over `file://`, the modular sources themselves need a static server — e.g.
-`python -m http.server` — if you want to load them un-bundled during development.)
+Install the development dependency:
+
+```bash
+npm install
+```
+
+Build the browser bundle:
+
+```bash
+npm run build
+```
+
+Then open:
+
+```text
+index.html
+```
+
+in a modern browser.
+
+The generated bundle works over the `file://` protocol, so no web server is required for normal use.
+
+### Development
+
+The source of truth is the modular JavaScript under `js/`.
+
+Run:
+
+```bash
+npm run watch
+```
+
+to rebuild automatically while editing.
+
+If you want to load the ES modules directly during development, serve the directory with any simple static server, for example:
+
+```bash
+python -m http.server
+```
+
+---
 
 ## Keyboard shortcuts
 
-| Key | Action |
+| Shortcut | Action |
 |---|---|
-| `V` | Selection tool (move whole objects) |
-| `A` | Direct Selection tool (edit path anchors / joints) |
-| `R` `E` `C` `L` `X` `P` `N` `T` | Rect / Ellipse / Circle / Line / Connector / Polyline / Pen / Text tool |
-| `Esc` | Cancel current tool → Select; also cancels an in-progress polyline or finalizes a pen path |
-| `Enter` | Finish the in-progress pen path |
-| `F2` | Rename label on selected shape |
+| `V` | Selection tool |
+| `A` | Direct Selection tool |
+| `R` | Rectangle |
+| `E` | Ellipse |
+| `C` | Circle |
+| `L` | Line |
+| `X` | Connector |
+| `P` | Polyline |
+| `N` | Pen |
+| `T` | Text |
+| `Esc` | Cancel current tool / finish path |
+| `Enter` | Finish current pen path |
+| `F2` | Rename selected shape label |
 | `Delete` / `Backspace` | Delete selection |
-| `Ctrl+S` / `Ctrl+O` | Save / open a `.euclid.json` document |
-| `Ctrl+Z` / `Ctrl+Shift+Z` (or `Ctrl+Y`) | Undo / Redo |
+| `Ctrl+S` | Save `.euclid.json` |
+| `Ctrl+O` | Open `.euclid.json` |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Shift+Z` / `Ctrl+Y` | Redo |
 | `Ctrl+A` | Select all top-level nodes |
-| `Ctrl+D` | Transform Again — replay the last move/rotate (re-duplicating if it was a duplicate-drag); plain duplicate if none yet |
-| `Ctrl+C` / `Ctrl+V` | Copy / Paste (offset +10, +10) |
-| `Ctrl+Shift+V` | Paste in place (exact same location) |
-| `Ctrl+G` / `Ctrl+Shift+G` | Group / Ungroup |
-| `Ctrl+'` / `Ctrl+Shift+'` | Toggle grid / snap-to-grid |
-| `Ctrl +` / `Ctrl -` | Zoom in / out |
-| `Ctrl+0` / `Ctrl+Shift+0` | Fit to view / reset to 100% |
-| Arrow keys | Nudge selection 1px (hold `Shift` for 10px) |
+| `Ctrl+D` | Transform Again |
+| `Ctrl+C` / `Ctrl+V` | Copy / paste |
+| `Ctrl+Shift+V` | Paste in place |
+| `Ctrl+G` | Group |
+| `Ctrl+Shift+G` | Ungroup |
+| `Ctrl+'` | Toggle grid |
+| `Ctrl+Shift+'` | Toggle snap-to-grid |
+| `Ctrl +` / `Ctrl -` | Zoom |
+| `Ctrl+0` | Fit to view |
+| `Ctrl+Shift+0` | Reset to 100% |
+| Arrow keys | Nudge 1 px |
+| `Shift` + Arrow keys | Nudge 10 px |
 
-While drawing: hold `Shift` to constrain rect/ellipse to a square/circle, or a line to 45° increments. With the pen, click for corners and click-drag for smooth bézier handles; click the first anchor to close the path. While moving: hold `Alt` to bypass snapping (both smart guides and grid). Ctrl+drag a selection to duplicate it as you move. While editing path points, hold `Alt` to break a smooth anchor's handle pair.
+Additional gesture modifiers:
 
-While rotating: a live angle readout follows the handle; hold `Shift` to snap to 22.5° increments, or `Shift`+`Ctrl` for 1° fine steps. Hold `Alt` while dragging the rotate handle to leave the original in place and rotate a duplicate (Illustrator rotate-and-copy).
+- Hold `Shift` while drawing to constrain geometry.
+- Hold `Alt` while moving to bypass snapping.
+- `Ctrl`-drag a selection to duplicate while moving.
+- `Alt`-drag the rotate handle to rotate a duplicate.
+- Hold `Shift` while rotating to snap to 22.5° increments.
+- Hold `Shift+Ctrl` while rotating for 1° fine steps.
+- With the Direct Selection tool, drag any anchor to reshape the object (and convert a primitive shape to an editable path on first drag).
+- Hold `Alt` while editing a Bézier handle to break the smooth handle pair.
 
-**Transform Again (`Ctrl+D`)** — repeats the last move or rotate on the current selection, re-duplicating when the transform was itself a duplicate-drag. So a Ctrl-drag copy followed by `Ctrl+D`×N steps out an evenly spaced row, and an Alt-drag rotate-copy followed by `Ctrl+D`×N sweeps out a radial pattern (e.g. rotate-and-copy 30°, then `Ctrl+D` eleven more times for a twelve-spoke rosette).
+---
 
-Zoom with Ctrl/⌘+wheel (at the cursor); pan with a two-finger scroll, middle-mouse drag, or `Space`+drag.
+## SVG import
 
-## Import support
+The importer is deliberately strict.
 
-The importer is deliberately strict — anything it can't represent throws a specific error instead of silently dropping data.
+If Euclid cannot represent something faithfully, it reports the unsupported feature instead of silently dropping it.
 
-**Supported:** `rect`, `circle`, `ellipse`, `line`, `polyline`, `text`, `path`, `g`, `title`/`desc`/`metadata` (ignored), `<style>` and `<defs>` containing only styles or `<linearGradient>`s, `linearGradient` paint (with `url(#...)` fill/stroke references that resolve to one), `transform` composed of `translate()`, `rotate()`, and rigid `matrix()`.
+### Supported
 
-**Rejected with a clear message:** radial gradients, patterns, filters, clip paths, masks, `<use>`, `<image>`, `<symbol>`, `<marker>`, `url(#...)` references that don't resolve to a linear gradient, and any transform that includes scale or shear.
+- `rect`
+- `circle`
+- `ellipse`
+- `line`
+- `polyline`
+- `text`
+- `path`
+- `g`
+- `title`
+- `desc`
+- `metadata`
+- class-based `<style>`
+- `<defs>` containing supported styles or linear gradients
+- linear gradients
+- `translate()`
+- `rotate()`
+- rigid `matrix()` transforms
 
-Illustrator's default "SVG 1.1" export (with `.st0 { fill: #... }` class styling) works out of the box.
+Adobe Illustrator SVG exports using class-based styles are supported.
+
+### Currently rejected
+
+- Radial gradients
+- Patterns
+- Filters
+- Clip paths
+- Masks
+- `<use>`
+- `<image>`
+- `<symbol>`
+- `<marker>`
+- Unsupported paint-server references
+- Transforms containing scale or shear
+
+The intent is to reject unsupported semantics clearly rather than produce a drawing that only looks approximately correct.
+
+---
 
 ## Project layout
 
-```
-index.html          entry point; wires up the toolbar, canvas, panels
-styles.css          all styling (dark UI, light canvas)
+```text
+index.html              Browser application shell
+styles.css              Application styling
+
 js/
-  euclid.bundle.js  generated single-file bundle loaded by index.html (npm run build)
-  main.js           bootstrap — mount modules and wire the pub/sub loop
-  state.js          document tree + selection + observer subscribe/notify
-  history.js        snapshot-based undo/redo (200-entry ring)
-  render.js         SVG DOM rendering + selection chrome + coord conversion
-  tools.js          pointer/keyboard state machine for every tool + gestures
-  ui.js             toolbar, property panel, keyboard shortcuts, clipboard
-  export.js         hand-written SVG serializer + live source panel + copy/download
-  import.js         strict SVG parser (with Illustrator class inlining)
-  persist.js        native .euclid.json save/open + debounced localStorage autosave
-  paths.js          structured pen-path anchor model ↔ SVG path `d` (with rounding)
-  paint.js          gradient paint-server model (linear) ↔ derived <linearGradient> defs
-  layers.js         Illustrator-style layers panel (drag + context-menu reorder)
-  align.js          alignment + distribution ops
-  guides.js         smart snapping guides drawn during drag
-  grid.js           document-space grid + snap-to-grid (pure view concern)
-  viewport.js       zoom/pan of the canvas viewBox (never touches the model)
-  connectors.js     pure connector geometry — straight + orthogonal routing
+  main.js               Bootstrap and subscriptions
+  state.js              Authoritative document tree
+  history.js            Undo / redo
+  render.js             SVG DOM rendering
+  tools.js              Drawing and pointer interaction
+  ui.js                 Toolbar and property panel
+  export.js             SVG serialization
+  import.js             Strict SVG parser
+  persist.js            Save / open / autosave
+  paths.js              Structured Bézier path model
+  paint.js              Gradient model
+  layers.js             Layers panel
+  align.js              Alignment and distribution
+  guides.js             Smart alignment guides
+  grid.js               Grid and snapping
+  viewport.js           Zoom and pan
+  connectors.js         Connector geometry
+
+tools/
+  shot.mjs              Browser screenshot helper
 ```
 
-Architecture note: `state.js` holds the authoritative doc tree; every other module reads from it and re-renders on `subscribe()`. All mutations go through `mutate(fn)`, which deep-clones the root, mutates a draft, then swaps it and notifies subscribers.
+`js/euclid.bundle.js` is a generated build artifact loaded by `index.html`.
+
+---
+
+## Scope
+
+Euclid is intentionally **not** trying to become a complete replacement for Illustrator, Figma, Inkscape, or diagrams.net.
+
+The target is narrower:
+
+```text
+technical documentation
+        │
+        ├── block diagrams
+        ├── architecture diagrams
+        ├── scientific figures
+        ├── engineering illustrations
+        ├── flow diagrams
+        └── simple vector artwork
+                  │
+                  ▼
+             clean SVG
+```
+
+That scope provides a simple feature filter:
+
+> Does this feature materially improve technical drawing, structured vector editing, or AI-assisted graphics?
+
+If yes, it belongs in the conversation.
+
+If not, Euclid probably does not need it.
+
+---
+
+## Direction
+
+The next major architectural step is to separate the reusable document and geometry logic from the browser UI:
+
+```text
+                    euclid-core
+                   /           \
+                  /             \
+          euclid-web           euclid-mcp
+```
+
+`euclid-core` would contain the model and semantic operations.
+
+`euclid-web` would remain the lightweight visual editor.
+
+`euclid-mcp` would expose the same capabilities to LLMs and AI agents.
+
+This would allow workflows such as:
+
+> "Draw an OFDM transmitter with an LDPC encoder, QAM modulator, OFDM modulator, and RF front end. Use orthogonal connectors and evenly space the blocks."
+
+The agent could create the diagram through Euclid's structured graphics operations, after which the user could continue editing the result manually in the browser.
+
+That human–AI round trip is the long-term goal of the project.
+
+---
 
 ## License
 
