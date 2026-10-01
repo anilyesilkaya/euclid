@@ -314,6 +314,44 @@
     if (closed) out.push("Z");
     return out.join(" ");
   }
+  var KAPPA = 0.5522847498307936;
+  function shapeToAnchors(node) {
+    if (!node || !node.attrs) return null;
+    const a = node.attrs;
+    if (node.type === "rect") {
+      const { x, y, width: w, height: h } = a;
+      if (!(w > 0 && h > 0)) return null;
+      const anchors = [
+        { x, y },
+        { x: x + w, y },
+        { x: x + w, y: y + h },
+        { x, y: y + h }
+      ];
+      return { anchors, closed: true, cornerRadius: Math.max(a.rx || 0, a.ry || 0) };
+    }
+    if (node.type === "ellipse" || node.type === "circle") {
+      const cx = a.cx, cy = a.cy;
+      const rx = node.type === "circle" ? a.r : a.rx;
+      const ry = node.type === "circle" ? a.r : a.ry;
+      if (!(rx > 0 && ry > 0)) return null;
+      const ox = rx * KAPPA, oy = ry * KAPPA;
+      const anchors = [
+        { x: cx + rx, y: cy, cin: { x: cx + rx, y: cy - oy }, cout: { x: cx + rx, y: cy + oy } },
+        { x: cx, y: cy + ry, cin: { x: cx + ox, y: cy + ry }, cout: { x: cx - ox, y: cy + ry } },
+        { x: cx - rx, y: cy, cin: { x: cx - rx, y: cy + oy }, cout: { x: cx - rx, y: cy - oy } },
+        { x: cx, y: cy - ry, cin: { x: cx - ox, y: cy - ry }, cout: { x: cx + ox, y: cy - ry } }
+      ];
+      return { anchors, closed: true, cornerRadius: 0 };
+    }
+    if (node.type === "line") {
+      return { anchors: [{ x: a.x1, y: a.y1 }, { x: a.x2, y: a.y2 }], closed: false, cornerRadius: 0 };
+    }
+    if (node.type === "polyline" && Array.isArray(a.points) && a.points.length >= 2) {
+      return { anchors: a.points.map(([x, y]) => ({ x, y })), closed: false, cornerRadius: 0 };
+    }
+    return null;
+  }
+  var GEOMETRY_ATTRS = ["x", "y", "width", "height", "rx", "ry", "cx", "cy", "r", "x1", "y1", "x2", "y2", "points", "d"];
   function anchorsBBox(anchors) {
     if (!Array.isArray(anchors) || anchors.length === 0) {
       return { x: 0, y: 0, width: 0, height: 0 };
@@ -782,8 +820,9 @@
     }
     if (boxes.length === 1 && directSelectMode) {
       const node = findNode(getDoc(), boxes[0].id);
-      if (node && node.type === "path" && Array.isArray(node.anchors) && node.anchors.length && !node.shapeMode) {
-        drawPathSelection(boxes[0], node);
+      const editable = anchorsForEditing(node);
+      if (editable) {
+        drawPathSelection(boxes[0], editable);
         return;
       }
     }
@@ -847,7 +886,15 @@
       chromeSelection.appendChild(c);
     }
   }
-  function drawPathSelection({ id, el }, node) {
+  function anchorsForEditing(node) {
+    if (!node) return null;
+    if (node.type === "path" && Array.isArray(node.anchors) && node.anchors.length && !node.shapeMode) {
+      return { anchors: node.anchors, closed: !!node.closed, cornerRadius: node.cornerRadius || 0 };
+    }
+    return shapeToAnchors(node);
+  }
+  function drawPathSelection({ id, el }, editable) {
+    const { anchors, closed, cornerRadius } = editable;
     const wrap = document.createElementNS(SVG_NS2, "g");
     wrap.setAttribute("data-role", "path-edit");
     wrap.setAttribute("data-id", id);
@@ -856,12 +903,11 @@
     chromeSelection.appendChild(wrap);
     const outline = document.createElementNS(SVG_NS2, "path");
     outline.setAttribute("class", "connector-selected");
-    outline.setAttribute("d", el.getAttribute("d") || "");
+    outline.setAttribute("d", anchorsToPath(anchors, closed, cornerRadius));
     outline.setAttribute("fill", "none");
     wrap.appendChild(outline);
     const scale = pixelScaleOf(el);
     const hs = HANDLE_SIZE * scale;
-    const anchors = node.anchors;
     anchors.forEach((a, i) => {
       if (!a) return;
       for (const which of ["cin", "cout"]) {
@@ -1512,6 +1558,8 @@
         beginMovePayload(e);
       } else if (gesture.type === "rotate") {
         beginRotatePayload();
+      } else if (gesture.type === "path-point") {
+        beginPathPointPayload();
       }
     }
     if (gesture.type === "draw") {
@@ -2322,11 +2370,13 @@
   function startPathPointDrag(e, handleEl, p) {
     const id = handleEl.getAttribute("data-id");
     const node = findNode(getDoc(), id);
-    if (!node || node.type !== "path" || !Array.isArray(node.anchors)) return;
+    if (!node) return;
+    const isPath = node.type === "path" && Array.isArray(node.anchors);
+    const needsConvert = !isPath && !!shapeToAnchors(node);
+    if (!isPath && !needsConvert) return;
     const index = Number(handleEl.getAttribute("data-index"));
     const kind = handleEl.getAttribute("data-role");
     const which = handleEl.getAttribute("data-which");
-    const el = getDocLayer().querySelector(`[data-id="${cssEscape2(id)}"]`);
     beginTransaction();
     gesture = {
       type: "path-point",
@@ -2337,12 +2387,33 @@
       index,
       kind,
       which,
-      el
-      // path element — supplies the local matrix each frame
+      needsConvert
+      // No element ref is cached: every mutate() rebuilds #doc-layer, so the path
+      // element is re-queried fresh each frame (a stale ref gave the wrong matrix
+      // and made the dragged anchor jitter / track at the zoom factor).
     };
   }
+  function beginPathPointPayload() {
+    if (!gesture.needsConvert) return;
+    convertShapeToPath(gesture.pathId);
+    gesture.needsConvert = false;
+  }
+  function convertShapeToPath(id) {
+    mutate((root) => {
+      const n = findNode(root, id);
+      if (!n) return;
+      const derived = shapeToAnchors(n);
+      if (!derived) return;
+      n.type = "path";
+      n.anchors = derived.anchors;
+      n.closed = derived.closed;
+      if (derived.cornerRadius) n.cornerRadius = derived.cornerRadius;
+      for (const k of GEOMETRY_ATTRS) delete n.attrs[k];
+    });
+  }
   function updatePathPoint(e) {
-    const { pathId, index, kind, which, el } = gesture;
+    const { pathId, index, kind, which } = gesture;
+    const el = getDocLayer().querySelector(`[data-id="${cssEscape2(pathId)}"]`);
     let loc = el ? toLocalPoint(e, el) : toCanvasPoint(e);
     if (kind === "path-anchor" && isSnap() && !e.altKey) {
       const s = snapPoint(loc.x, loc.y);
@@ -4724,7 +4795,7 @@
   var TIGHT_PADDING = 8;
   var INDENT = "  ";
   var tightMode = false;
-  var GEOMETRY_ATTRS = [
+  var GEOMETRY_ATTRS2 = [
     "x",
     "y",
     "width",
@@ -4991,7 +5062,7 @@
     const attrs = [];
     const emit2 = (k, v) => attrs.push(`${k}="${formatValue(k, v)}"`);
     const derivedD = node.type === "path" && Array.isArray(node.anchors) ? anchorsToPath(node.anchors, node.closed, node.cornerRadius || 0) : null;
-    for (const k of GEOMETRY_ATTRS) {
+    for (const k of GEOMETRY_ATTRS2) {
       if (!(k in node.attrs)) continue;
       if (k === "d" && derivedD !== null) continue;
       const v = node.attrs[k];
@@ -5019,7 +5090,7 @@
       emit2(k, v);
     }
     for (const [k, v] of Object.entries(node.attrs)) {
-      if (GEOMETRY_ATTRS.includes(k) || TEXT_ATTRS.includes(k) || PRESENTATION_ATTRS.includes(k)) continue;
+      if (GEOMETRY_ATTRS2.includes(k) || TEXT_ATTRS.includes(k) || PRESENTATION_ATTRS.includes(k)) continue;
       if (isDefault(k, v)) continue;
       emit2(k, v);
     }

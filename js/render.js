@@ -4,7 +4,7 @@
 
 import { getDoc, getSelection, findNode } from "./state.js";
 import { routeStraight, routeOrthogonal } from "./connectors.js";
-import { anchorsToPath, anchorsBBox } from "./paths.js";
+import { anchorsToPath, anchorsBBox, shapeToAnchors } from "./paths.js";
 import { collectGradients, linearGradientElement, paintRef, PAINT_SLOTS } from "./paint.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -413,15 +413,19 @@ function renderSelection() {
     return;
   }
 
-  // A lone selected pen path (structured anchors) gets direct node-editing chrome
-  // — anchor + bézier-handle points — instead of a bbox with resize/rotate handles,
-  // but ONLY under the Direct Selection tool (the white arrow). Under the plain
-  // Selection tool it shows the normal move/resize bbox like any other shape.
-  // "Shape mode" (Convert to shape) always uses the bbox chrome regardless of tool.
+  // Under the Direct Selection tool (the white arrow), a lone selected object
+  // shows direct node-editing chrome — a draggable joint at every anchor, plus
+  // bézier-handle points on smooth anchors — instead of the move/resize bbox.
+  // Pen paths use their stored anchors; primitive shapes (rect / ellipse / circle
+  // / line / polyline) derive anchors on the fly (shapeToAnchors) so they get
+  // joints too — Illustrator converts the primitive to a real path only once you
+  // actually drag a joint (handled in tools.js). "Shape mode" paths (Convert to
+  // shape) opt out and keep the bbox chrome so they resize/rotate like a rect.
   if (boxes.length === 1 && directSelectMode) {
     const node = findNode(getDoc(), boxes[0].id);
-    if (node && node.type === "path" && Array.isArray(node.anchors) && node.anchors.length && !node.shapeMode) {
-      drawPathSelection(boxes[0], node);
+    const editable = anchorsForEditing(node);
+    if (editable) {
+      drawPathSelection(boxes[0], editable);
       return;
     }
   }
@@ -501,11 +505,25 @@ function drawConnectorSelection(id, el) {
   }
 }
 
-// Direct node-editing chrome for a pen path: control lines + round bézier-handle
+// What to show joints for under Direct Selection, or null if the node isn't
+// anchor-editable. Returns { anchors, closed, cornerRadius } so the chrome can
+// trace the outline from anchors (a primitive's element has no `d` to borrow).
+// Pen paths (not in shape mode) expose their stored anchors; primitive shapes
+// derive a transient anchor list so they get joints too.
+function anchorsForEditing(node) {
+  if (!node) return null;
+  if (node.type === "path" && Array.isArray(node.anchors) && node.anchors.length && !node.shapeMode) {
+    return { anchors: node.anchors, closed: !!node.closed, cornerRadius: node.cornerRadius || 0 };
+  }
+  return shapeToAnchors(node);
+}
+
+// Direct node-editing chrome for a path/shape: control lines + round bézier-handle
 // points for smooth anchors, and a square handle at every anchor. All live in the
-// node's LOCAL space (same space as node.anchors), so the chrome group mirrors the
-// path element's transform — dragging then converts pointer→local via that matrix.
-function drawPathSelection({ id, el }, node) {
+// node's LOCAL space (same space as the anchors), so the chrome group mirrors the
+// element's transform — dragging then converts pointer→local via that matrix.
+function drawPathSelection({ id, el }, editable) {
+  const { anchors, closed, cornerRadius } = editable;
   const wrap = document.createElementNS(SVG_NS, "g");
   wrap.setAttribute("data-role", "path-edit");
   wrap.setAttribute("data-id", id);
@@ -513,16 +531,17 @@ function drawPathSelection({ id, el }, node) {
   if (t) wrap.setAttribute("transform", t);
   chromeSelection.appendChild(wrap);
 
-  // Trace the path itself as a highlight (its own derived `d`, drawn in local space).
+  // Trace the outline as a highlight, in local space. Derived from the anchors
+  // (not the element's `d`) so a primitive shape — whose <rect>/<ellipse>/<line>
+  // element has no `d` — still gets a traced outline.
   const outline = document.createElementNS(SVG_NS, "path");
   outline.setAttribute("class", "connector-selected");
-  outline.setAttribute("d", el.getAttribute("d") || "");
+  outline.setAttribute("d", anchorsToPath(anchors, closed, cornerRadius));
   outline.setAttribute("fill", "none");
   wrap.appendChild(outline);
 
   const scale = pixelScaleOf(el);
   const hs = HANDLE_SIZE * scale;
-  const anchors = node.anchors;
 
   // Bézier control handles first (so anchor squares paint on top).
   anchors.forEach((a, i) => {

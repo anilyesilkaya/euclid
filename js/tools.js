@@ -10,7 +10,7 @@ import { toCanvasPoint, toLocalPoint, getTransientLayer, getDocLayer, elementBBo
 import * as guides from "./guides.js";
 import * as grid from "./grid.js";
 import { routeStraight } from "./connectors.js";
-import { anchorsToPath } from "./paths.js";
+import { anchorsToPath, shapeToAnchors, GEOMETRY_ATTRS } from "./paths.js";
 
 const CANVAS_BBOX = { x: 0, y: 0, width: 1000, height: 700 };
 const SNAP_THRESHOLD = 6; // canvas units — feels right at default zoom
@@ -155,6 +155,8 @@ function onPointerMove(e) {
       beginMovePayload(e);
     } else if (gesture.type === "rotate") {
       beginRotatePayload();
+    } else if (gesture.type === "path-point") {
+      beginPathPointPayload();
     }
   }
 
@@ -1103,22 +1105,59 @@ export function cancelPen() {
 function startPathPointDrag(e, handleEl, p) {
   const id = handleEl.getAttribute("data-id");
   const node = findNode(getDoc(), id);
-  if (!node || node.type !== "path" || !Array.isArray(node.anchors)) return;
+  if (!node) return;
+  // Pen paths edit their stored anchors directly; a primitive shape (rect /
+  // ellipse / line / polyline) is converted to an editable path on the first real
+  // drag (Illustrator-style), deferred to beginPathPointPayload so a stray click
+  // never rewrites the node.
+  const isPath = node.type === "path" && Array.isArray(node.anchors);
+  const needsConvert = !isPath && !!shapeToAnchors(node);
+  if (!isPath && !needsConvert) return;
   const index = Number(handleEl.getAttribute("data-index"));
   const kind = handleEl.getAttribute("data-role"); // "path-anchor" | "path-handle"
   const which = handleEl.getAttribute("data-which"); // "in" | "out" (handles only)
-  const el = getDocLayer().querySelector(`[data-id="${cssEscape(id)}"]`);
   history.beginTransaction();
   gesture = {
     type: "path-point",
     origin: p, last: p, moved: false,
-    pathId: id, index, kind, which,
-    el, // path element — supplies the local matrix each frame
+    pathId: id, index, kind, which, needsConvert,
+    // No element ref is cached: every mutate() rebuilds #doc-layer, so the path
+    // element is re-queried fresh each frame (a stale ref gave the wrong matrix
+    // and made the dragged anchor jitter / track at the zoom factor).
   };
 }
 
+// First real drag on a primitive shape's joint: bake it into an editable path so
+// subsequent frames mutate node.anchors like any pen path.
+function beginPathPointPayload() {
+  if (!gesture.needsConvert) return;
+  convertShapeToPath(gesture.pathId);
+  gesture.needsConvert = false;
+}
+
+// Replace a primitive shape node with an equivalent structured path in place
+// (same id / transform / styling), dropping its geometry attrs. The derived
+// anchors come from the same shapeToAnchors used to draw the joints, so the
+// gesture's anchor index still points at the handle the user grabbed.
+function convertShapeToPath(id) {
+  mutate((root) => {
+    const n = findNode(root, id);
+    if (!n) return;
+    const derived = shapeToAnchors(n);
+    if (!derived) return;
+    n.type = "path";
+    n.anchors = derived.anchors;
+    n.closed = derived.closed;
+    if (derived.cornerRadius) n.cornerRadius = derived.cornerRadius;
+    for (const k of GEOMETRY_ATTRS) delete n.attrs[k];
+  });
+}
+
 function updatePathPoint(e) {
-  const { pathId, index, kind, which, el } = gesture;
+  const { pathId, index, kind, which } = gesture;
+  // Re-query the live path element each frame — mutate() rebuilt it last frame, so
+  // a cached ref would be detached and yield a stale matrix (the jitter bug).
+  const el = getDocLayer().querySelector(`[data-id="${cssEscape(pathId)}"]`);
   // Pointer → path-local coords (chrome mirrors the node transform).
   let loc = el ? toLocalPoint(e, el) : toCanvasPoint(e);
   // Snap anchors to the grid unless Alt bypasses; control handles stay free.
