@@ -117,6 +117,57 @@ function anchorsToRoundedPath(anchors, closed, radius) {
   return out.join(" ");
 }
 
+// Convert a primitive shape node (rect / ellipse / circle / line / polyline) into
+// the structured anchor model, so the Direct Selection tool can show editable
+// joints on it and reshape it (Illustrator converts a primitive to a path the
+// moment you drag one of its anchors). Returns { anchors, closed, cornerRadius }
+// or null for shapes with no meaningful anchors (group / text / connector, or a
+// degenerate zero-size shape). Rect corners/line/polyline vertices are plain
+// corners; ellipses/circles use the 4-point kappa bézier approximation so the
+// converted path still renders as a smooth curve.
+const KAPPA = 0.5522847498307936; // (4/3)·(√2−1): control-arm length for a quarter arc
+
+export function shapeToAnchors(node) {
+  if (!node || !node.attrs) return null;
+  const a = node.attrs;
+  if (node.type === "rect") {
+    const { x, y, width: w, height: h } = a;
+    if (!(w > 0 && h > 0)) return null;
+    const anchors = [
+      { x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h },
+    ];
+    // Preserve a rounded rect's rounding as the path's live corner radius.
+    return { anchors, closed: true, cornerRadius: Math.max(a.rx || 0, a.ry || 0) };
+  }
+  if (node.type === "ellipse" || node.type === "circle") {
+    const cx = a.cx, cy = a.cy;
+    const rx = node.type === "circle" ? a.r : a.rx;
+    const ry = node.type === "circle" ? a.r : a.ry;
+    if (!(rx > 0 && ry > 0)) return null;
+    const ox = rx * KAPPA, oy = ry * KAPPA;
+    // Four smooth anchors (right, bottom, left, top) tracing the ellipse clockwise.
+    const anchors = [
+      { x: cx + rx, y: cy, cin: { x: cx + rx, y: cy - oy }, cout: { x: cx + rx, y: cy + oy } },
+      { x: cx, y: cy + ry, cin: { x: cx + ox, y: cy + ry }, cout: { x: cx - ox, y: cy + ry } },
+      { x: cx - rx, y: cy, cin: { x: cx - rx, y: cy + oy }, cout: { x: cx - rx, y: cy - oy } },
+      { x: cx, y: cy - ry, cin: { x: cx - ox, y: cy - ry }, cout: { x: cx + ox, y: cy - ry } },
+    ];
+    return { anchors, closed: true, cornerRadius: 0 };
+  }
+  if (node.type === "line") {
+    return { anchors: [{ x: a.x1, y: a.y1 }, { x: a.x2, y: a.y2 }], closed: false, cornerRadius: 0 };
+  }
+  if (node.type === "polyline" && Array.isArray(a.points) && a.points.length >= 2) {
+    return { anchors: a.points.map(([x, y]) => ({ x, y })), closed: false, cornerRadius: 0 };
+  }
+  return null;
+}
+
+// Attribute keys that describe a primitive shape's geometry (dropped when a shape
+// is converted to a path — its geometry then lives in node.anchors). Styling
+// attrs (fill, stroke, opacity, …) are kept.
+export const GEOMETRY_ATTRS = ["x", "y", "width", "height", "rx", "ry", "cx", "cy", "r", "x1", "y1", "x2", "y2", "points", "d"];
+
 // Axis-aligned bounding box of an anchor list, including bézier control handles
 // (a conservative box — control points bound the curve). Used for selection
 // chrome and label centering on structured paths.

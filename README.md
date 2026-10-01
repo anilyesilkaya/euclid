@@ -55,6 +55,8 @@ Euclid provides two Illustrator-style selection modes:
 - **Selection (`V`)** — move, resize, and rotate whole objects.
 - **Direct Selection (`A`)** — edit path anchors and Bézier handles.
 
+Under the Direct Selection tool, a single selected object hides its move/resize bounding box and instead shows a draggable joint at every anchor — mirroring Illustrator's two arrows. This works on *any* shape, not just pen paths: a rectangle, ellipse, circle, line, or polyline shows its joints too, and dragging one converts the primitive into an editable path (one-way, as in Illustrator). So you can push a rectangle's corner to make a quadrilateral, or pull an ellipse out of round.
+
 Pen paths use a structured anchor model. SVG path data is derived from that model rather than being manually edited as a raw `d` string.
 
 You can:
@@ -397,6 +399,7 @@ Additional gesture modifiers:
 - `Alt`-drag the rotate handle to rotate a duplicate.
 - Hold `Shift` while rotating to snap to 22.5° increments.
 - Hold `Shift+Ctrl` while rotating for 1° fine steps.
+- With the Direct Selection tool, drag any anchor to reshape the object (and convert a primitive shape to an editable path on first drag).
 - Hold `Alt` while editing a Bézier handle to break the smooth handle pair.
 
 ---
