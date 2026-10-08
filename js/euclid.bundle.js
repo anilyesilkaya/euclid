@@ -352,34 +352,55 @@
     }
     return out.join(" ");
   }
+  function cornerAt(anchors, closed, i) {
+    const n = anchors.length;
+    if (n < 2 || !closed && (i === 0 || i === n - 1)) return null;
+    const v = anchors[i];
+    if (!v || v.cin || v.cout) return null;
+    const pv = anchors[(i - 1 + n) % n];
+    const nx = anchors[(i + 1) % n];
+    if (!pv || !nx) return null;
+    if (pv.cout || nx.cin) return null;
+    const dPrev = Math.hypot(pv.x - v.x, pv.y - v.y);
+    const dNext = Math.hypot(nx.x - v.x, nx.y - v.y);
+    if (dPrev < 1e-6 || dNext < 1e-6) return null;
+    return {
+      V: { x: v.x, y: v.y },
+      uPrev: { x: (pv.x - v.x) / dPrev, y: (pv.y - v.y) / dPrev },
+      uNext: { x: (nx.x - v.x) / dNext, y: (nx.y - v.y) / dNext },
+      edgeMin: Math.min(dPrev, dNext),
+      maxT: Math.min(dPrev, dNext) / 2
+    };
+  }
+  function roundableCorners(anchors, closed, radius = 0) {
+    if (!Array.isArray(anchors)) return [];
+    const out = [];
+    anchors.forEach((_, i) => {
+      const c = cornerAt(anchors, closed, i);
+      if (!c) return;
+      const dir = { x: c.uPrev.x + c.uNext.x, y: c.uPrev.y + c.uNext.y };
+      if (Math.hypot(dir.x, dir.y) < 1e-6) return;
+      out.push({ index: i, V: c.V, dir, t: Math.min(Math.max(radius, 0), c.maxT), maxT: c.maxT, edgeMin: c.edgeMin });
+    });
+    return out;
+  }
   function anchorsToRoundedPath(anchors, closed, radius) {
     const n = anchors.length;
     if (n < 2) return "";
     const p = (v) => round(v);
-    const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
-    const prevIdx = (i) => (i - 1 + n) % n;
     const nextIdx = (i) => (i + 1) % n;
     function roundInfo(i) {
-      if (!closed && (i === 0 || i === n - 1)) return null;
-      const v = anchors[i];
-      if (!v || v.cin || v.cout) return null;
-      const pv = anchors[prevIdx(i)];
-      const nx = anchors[nextIdx(i)];
-      if (!pv || !nx) return null;
-      if (pv.cout || nx.cin) return null;
-      const dPrev = dist(pv, v);
-      const dNext = dist(v, nx);
-      if (dPrev < 1e-6 || dNext < 1e-6) return null;
-      const t = Math.min(radius, dPrev / 2, dNext / 2);
+      const c = cornerAt(anchors, closed, i);
+      if (!c) return null;
+      const t = Math.min(radius, c.maxT);
       if (t < 1e-4) return null;
-      const uPrev = { x: (pv.x - v.x) / dPrev, y: (pv.y - v.y) / dPrev };
-      const uNext = { x: (nx.x - v.x) / dNext, y: (nx.y - v.y) / dNext };
+      const { V, uPrev, uNext } = c;
       return {
-        A: { x: v.x + uPrev.x * t, y: v.y + uPrev.y * t },
+        A: { x: V.x + uPrev.x * t, y: V.y + uPrev.y * t },
         // approach (from prev)
-        B: { x: v.x + uNext.x * t, y: v.y + uNext.y * t },
+        B: { x: V.x + uNext.x * t, y: V.y + uNext.y * t },
         // depart (toward next)
-        V: { x: v.x, y: v.y }
+        V
       };
     }
     const info = anchors.map((_, i) => roundInfo(i));
@@ -571,6 +592,8 @@
   // js/render.js
   var SVG_NS2 = "http://www.w3.org/2000/svg";
   var HANDLE_SIZE = 8;
+  var CORNER_WIDGET_MIN = 14;
+  var CORNER_WIDGET_EDGE = 40;
   var ROT_STEM_LEN = 24;
   var docLayer;
   var chromeHover;
@@ -1016,9 +1039,10 @@
   function anchorsForEditing(node) {
     if (!node) return null;
     if (node.type === "path" && Array.isArray(node.anchors) && node.anchors.length && !node.shapeMode) {
-      return { anchors: node.anchors, closed: !!node.closed, cornerRadius: node.cornerRadius || 0 };
+      return { anchors: node.anchors, closed: !!node.closed, cornerRadius: node.cornerRadius || 0, roundable: true };
     }
-    return shapeToAnchors(node);
+    const derived = shapeToAnchors(node);
+    return derived && { ...derived, roundable: node.type === "rect" };
   }
   function drawPathSelection({ id, el }, editable) {
     const { anchors, closed, cornerRadius } = editable;
@@ -1072,6 +1096,31 @@
       h.setAttribute("height", hs);
       wrap.appendChild(h);
     });
+    if (editable.roundable) drawCornerWidgets(wrap, id, editable, scale);
+  }
+  function drawCornerWidgets(wrap, id, { anchors, closed, cornerRadius }, scale) {
+    for (const c of roundableCorners(anchors, closed, cornerRadius)) {
+      if (c.edgeMin / scale < CORNER_WIDGET_EDGE) continue;
+      const len = Math.hypot(c.dir.x, c.dir.y);
+      const d = Math.max(c.t * len, CORNER_WIDGET_MIN * scale);
+      const x = c.V.x + c.dir.x / len * d;
+      const y = c.V.y + c.dir.y / len * d;
+      const ring = document.createElementNS(SVG_NS2, "circle");
+      ring.setAttribute("class", "corner-radius-handle");
+      ring.setAttribute("data-role", "corner-radius");
+      ring.setAttribute("data-id", id);
+      ring.setAttribute("data-index", c.index);
+      ring.setAttribute("cx", x);
+      ring.setAttribute("cy", y);
+      ring.setAttribute("r", 4.5 * scale);
+      wrap.appendChild(ring);
+      const dot = document.createElementNS(SVG_NS2, "circle");
+      dot.setAttribute("class", "corner-radius-dot");
+      dot.setAttribute("cx", x);
+      dot.setAttribute("cy", y);
+      dot.setAttribute("r", 1.5 * scale);
+      wrap.appendChild(dot);
+    }
   }
   function drawSingleSelectionChrome({ id, el, box }) {
     const wrap = document.createElementNS(SVG_NS2, "g");
@@ -1667,6 +1716,7 @@
     if (role === "rotate") return startRotate(e, target, p);
     if (role === "waypoint" || role === "waypoint-add") return startWaypointDrag(e, target, p);
     if (role === "path-anchor" || role === "path-handle") return startPathPointDrag(e, target, p);
+    if (role === "corner-radius") return startCornerRadius(e, target);
     if (isSelectTool(currentTool)) return handleSelectDown(e, p, target);
     if (currentTool === "polyline") return handlePolylineDown(e, p);
     if (currentTool === "pen") return handlePenDown(e, p);
@@ -1719,6 +1769,8 @@
       updatePenDrag(p, e);
     } else if (gesture.type === "path-point") {
       updatePathPoint(e);
+    } else if (gesture.type === "corner-radius") {
+      updateCornerRadius(e);
     } else if (gesture.type === "marquee") {
       updateMarquee(p);
     } else if (gesture.type === "connector") {
@@ -1731,7 +1783,7 @@
       return;
     }
     const role = e.target.getAttribute && e.target.getAttribute("data-role");
-    if (role === "resize" || role === "resize-multi" || role === "rotate" || role === "waypoint" || role === "waypoint-add" || role === "path-anchor" || role === "path-handle") {
+    if (role === "resize" || role === "resize-multi" || role === "rotate" || role === "waypoint" || role === "waypoint-add" || role === "path-anchor" || role === "path-handle" || role === "corner-radius") {
       setHover(null);
       return;
     }
@@ -1789,7 +1841,7 @@
           };
         }
       } else abort();
-      if (g.type === "rotate") hideRotationReadout();
+      if (g.type === "rotate") hideReadout();
     } else if (g.type === "waypoint") {
       if (g.moved) commit("waypoint");
       else abort();
@@ -1799,6 +1851,10 @@
     } else if (g.type === "path-point") {
       if (g.moved) commit("edit path");
       else abort();
+    } else if (g.type === "corner-radius") {
+      if (g.moved) commit("corner radius");
+      else abort();
+      hideReadout();
     }
     clearTransient();
   }
@@ -2601,6 +2657,111 @@
       // and made the dragged anchor jitter / track at the zoom factor).
     };
   }
+  function transformableTopIds() {
+    const doc2 = getDoc();
+    const ids = /* @__PURE__ */ new Set();
+    for (const id of getSelection()) {
+      const top = topAncestor(doc2, id);
+      if (top && top.type !== "connector") ids.add(top.id);
+    }
+    return ids;
+  }
+  function canvasBoxOf(ids) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const id of ids) {
+      const el = getDocLayer().querySelector(`[data-id="${cssEscape2(id)}"]`);
+      const b = el && elementBBoxInCanvas(el);
+      if (!b) continue;
+      minX = Math.min(minX, b.x1);
+      minY = Math.min(minY, b.y1);
+      maxX = Math.max(maxX, b.x2);
+      maxY = Math.max(maxY, b.y2);
+    }
+    return isFinite(minX) ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY } : null;
+  }
+  function selectionBox() {
+    return canvasBoxOf(transformableTopIds());
+  }
+  function setSelectionBox(target) {
+    const ids = transformableTopIds();
+    const box = canvasBoxOf(ids);
+    if (!box) return;
+    const sx = box.width > 0 ? target.width / box.width : 1;
+    const sy = box.height > 0 ? target.height / box.height : 1;
+    const dx = target.x - box.x, dy = target.y - box.y;
+    record(() => {
+      mutate((root) => {
+        for (const id of ids) {
+          const n = findNode(root, id);
+          if (!n) continue;
+          if (sx !== 1 || sy !== 1) scaleSubtree(n, box.x, box.y, sx, sy);
+          if (!n.transform) n.transform = emptyTransform();
+          n.transform.tx = (n.transform.tx || 0) + dx;
+          n.transform.ty = (n.transform.ty || 0) + dy;
+        }
+      });
+    });
+  }
+  function startCornerRadius(e, handleEl) {
+    const id = handleEl.getAttribute("data-id");
+    const index = Number(handleEl.getAttribute("data-index"));
+    const node = findNode(getDoc(), id);
+    const shape = node && roundableShape(node);
+    if (!shape) return;
+    const corner = roundableCorners(shape.anchors, shape.closed, shape.radius).find((c) => c.index === index);
+    if (!corner) return;
+    beginTransaction();
+    const p = toCanvasPoint(e);
+    gesture = {
+      type: "corner-radius",
+      origin: p,
+      last: p,
+      moved: false,
+      id,
+      corner,
+      startT: corner.t,
+      startProj: bisectorT(corner, cornerLocalPoint(e, id))
+    };
+    showReadout(formatRadius(shape.radius), p);
+  }
+  function updateCornerRadius(e) {
+    const { id, corner, startT, startProj } = gesture;
+    const t = Math.min(corner.maxT, Math.max(0, startT + bisectorT(corner, cornerLocalPoint(e, id)) - startProj));
+    const r3 = round22(t);
+    showReadout(formatRadius(r3), toCanvasPoint(e));
+    mutate((root) => {
+      const n = findNode(root, id);
+      if (!n) return;
+      if (n.type === "rect") {
+        if (r3 > 0) {
+          n.attrs.rx = r3;
+          n.attrs.ry = r3;
+        } else {
+          delete n.attrs.rx;
+          delete n.attrs.ry;
+        }
+      } else if (r3 > 0) n.cornerRadius = r3;
+      else delete n.cornerRadius;
+    });
+  }
+  function roundableShape(node) {
+    if (node.type === "rect") {
+      const d = shapeToAnchors(node);
+      return d && { anchors: d.anchors, closed: true, radius: node.attrs.rx || 0 };
+    }
+    if (node.type === "path" && Array.isArray(node.anchors) && !node.shapeMode) {
+      return { anchors: node.anchors, closed: !!node.closed, radius: node.cornerRadius || 0 };
+    }
+    return null;
+  }
+  function cornerLocalPoint(e, id) {
+    const el = getDocLayer().querySelector(`[data-id="${cssEscape2(id)}"]`);
+    return el ? toLocalPoint(e, el) : toCanvasPoint(e);
+  }
+  function bisectorT(corner, p) {
+    const { V, dir } = corner;
+    return ((p.x - V.x) * dir.x + (p.y - V.y) * dir.y) / (dir.x * dir.x + dir.y * dir.y);
+  }
   function beginPathPointPayload() {
     if (!gesture.needsConvert) return;
     convertShapeToPath(gesture.pathId);
@@ -2722,27 +2883,14 @@
   function startResizeMulti(e, handleEl, p) {
     const dir = handleEl.getAttribute("data-handle");
     const doc2 = getDoc();
-    const topIds = /* @__PURE__ */ new Set();
-    for (const id of getSelection()) {
-      const top = topAncestor(doc2, id);
-      if (top && top.type !== "connector") topIds.add(top.id);
-    }
-    if (topIds.size === 0) return;
+    const topIds = transformableTopIds();
+    const bbox = canvasBoxOf(topIds);
+    if (!bbox) return;
     const snapshots = /* @__PURE__ */ new Map();
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const id of topIds) {
       const node = findNode(doc2, id);
-      if (!node) continue;
-      snapshots.set(id, structuredClone(node));
-      const el = getDocLayer().querySelector(`[data-id="${cssEscape2(id)}"]`);
-      const b = el && elementBBoxInCanvas(el);
-      if (!b) continue;
-      if (b.x1 < minX) minX = b.x1;
-      if (b.y1 < minY) minY = b.y1;
-      if (b.x2 > maxX) maxX = b.x2;
-      if (b.y2 > maxY) maxY = b.y2;
+      if (node) snapshots.set(id, structuredClone(node));
     }
-    if (!isFinite(minX)) return;
     beginTransaction();
     gesture = {
       type: "resize",
@@ -2753,7 +2901,7 @@
       multi: {
         ids: [...topIds],
         snapshots,
-        bbox: { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+        bbox
       }
     };
   }
@@ -3075,7 +3223,7 @@
       n.transform.cx = localCx;
       n.transform.cy = localCy;
     });
-    showRotationReadout(newRot, p);
+    showReadout(formatAngle(newRot), p);
   }
   function transformAgain() {
     const lt = lastTransform;
@@ -3125,26 +3273,29 @@
       tr.rot = (tr.rot || 0) + lt.deg;
     }
   }
-  var rotationReadoutEl = null;
-  function showRotationReadout(deg, p) {
-    if (!rotationReadoutEl) {
-      rotationReadoutEl = document.createElement("div");
-      rotationReadoutEl.className = "rotation-readout";
-      document.body.appendChild(rotationReadoutEl);
+  var readoutEl = null;
+  function showReadout(text, p) {
+    if (!readoutEl) {
+      readoutEl = document.createElement("div");
+      readoutEl.className = "drag-readout";
+      document.body.appendChild(readoutEl);
     }
-    rotationReadoutEl.textContent = formatAngle(deg);
+    readoutEl.textContent = text;
     const s = canvasToScreen(p);
-    rotationReadoutEl.style.left = `${s.x + 16}px`;
-    rotationReadoutEl.style.top = `${s.y + 16}px`;
+    readoutEl.style.left = `${s.x + 16}px`;
+    readoutEl.style.top = `${s.y + 16}px`;
   }
-  function hideRotationReadout() {
-    if (rotationReadoutEl) {
+  function hideReadout() {
+    if (readoutEl) {
       try {
-        rotationReadoutEl.remove();
+        readoutEl.remove();
       } catch {
       }
-      rotationReadoutEl = null;
+      readoutEl = null;
     }
+  }
+  function formatRadius(r3) {
+    return `Radius: ${Math.round(r3 * 10) / 10}`;
   }
   function formatAngle(deg) {
     let a = (deg % 360 + 360) % 360;
@@ -3761,6 +3912,13 @@
   var pFontFamily;
   var pTextColor;
   var pRotation;
+  var transformGrid;
+  var pX;
+  var pY;
+  var pW;
+  var pH;
+  var pLock;
+  var lockProportions = false;
   var pConnectorRoute;
   var connectorDivider;
   var connectorRouteRow;
@@ -3981,6 +4139,12 @@
     pFontFamily = root.querySelector("#p-font-family");
     pTextColor = root.querySelector("#p-text-color");
     pRotation = root.querySelector("#p-rotation");
+    transformGrid = root.querySelector("#transform-grid");
+    pX = root.querySelector("#p-x");
+    pY = root.querySelector("#p-y");
+    pW = root.querySelector("#p-w");
+    pH = root.querySelector("#p-h");
+    pLock = root.querySelector("#p-lock");
     pConnectorRoute = root.querySelector("#p-connector-route");
     connectorDivider = root.querySelector("#connector-divider");
     connectorRouteRow = root.querySelector("#connector-route-row");
@@ -4113,6 +4277,13 @@
     });
     pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
     pTextColor.addEventListener("change", () => historyCommitAfter(() => applyTextColor(pTextColor.value)));
+    for (const [input, key] of [[pX, "x"], [pY, "y"], [pW, "width"], [pH, "height"]]) {
+      input.addEventListener("change", () => applyBoxField(key, input));
+    }
+    pLock.addEventListener("click", () => {
+      lockProportions = !lockProportions;
+      pLock.setAttribute("aria-pressed", String(lockProportions));
+    });
     pRotation.addEventListener("input", () => {
       const deg = normalizeAngle(pRotation.value);
       if (deg === null) return;
@@ -4316,6 +4487,19 @@
         n.transform.rot = deg;
       }
     });
+  }
+  function applyBoxField(key, input) {
+    const box = selectionBox();
+    const raw = input.value;
+    const v = Number(raw);
+    if (!box || raw === "" || !Number.isFinite(v) || (key === "width" || key === "height") && v <= 0) {
+      if (box) input.value = Math.round(box[key] * 100) / 100;
+      return;
+    }
+    const target = { ...box, [key]: v };
+    if (lockProportions && key === "width" && box.width > 0) target.height = box.height * (v / box.width);
+    if (lockProportions && key === "height" && box.height > 0) target.width = box.width * (v / box.height);
+    setSelectionBox(target);
   }
   function cssEscapeLocal(s) {
     return window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
@@ -4581,6 +4765,13 @@
     }
     propsEmpty.hidden = true;
     propsForm.hidden = false;
+    const box = selectionBox();
+    transformGrid.hidden = !box;
+    if (box) {
+      for (const [input, v] of [[pX, box.x], [pY, box.y], [pW, box.width], [pH, box.height]]) {
+        if (document.activeElement !== input) input.value = Math.round(v * 100) / 100;
+      }
+    }
     const canDistribute = ids.length >= 3;
     document.querySelectorAll('#align-grid .align-btn[data-align^="dist-"]').forEach((b) => {
       b.disabled = !canDistribute;

@@ -54,39 +54,70 @@ export function anchorsToPath(anchors, closed, cornerRadius = 0) {
   return out.join(" ");
 }
 
+// Geometry of vertex i if it's a roundable hard corner, else null. Needs
+// neighbours (interior for open paths), no handles of its own, and straight
+// segments on both sides. Returns the corner V, unit vectors along each edge
+// (toward the previous / next anchor), and the largest trim `maxT` (half of the
+// shorter edge, so neighbouring fillets never overlap).
+function cornerAt(anchors, closed, i) {
+  const n = anchors.length;
+  if (n < 2 || (!closed && (i === 0 || i === n - 1))) return null;
+  const v = anchors[i];
+  if (!v || v.cin || v.cout) return null;
+  const pv = anchors[(i - 1 + n) % n];
+  const nx = anchors[(i + 1) % n];
+  if (!pv || !nx) return null;
+  // A neighbouring outgoing/incoming handle would make the shared segment a
+  // curve — don't trim into a curve.
+  if (pv.cout || nx.cin) return null;
+  const dPrev = Math.hypot(pv.x - v.x, pv.y - v.y);
+  const dNext = Math.hypot(nx.x - v.x, nx.y - v.y);
+  if (dPrev < 1e-6 || dNext < 1e-6) return null;
+  return {
+    V: { x: v.x, y: v.y },
+    uPrev: { x: (pv.x - v.x) / dPrev, y: (pv.y - v.y) / dPrev },
+    uNext: { x: (nx.x - v.x) / dNext, y: (nx.y - v.y) / dNext },
+    edgeMin: Math.min(dPrev, dNext),
+    maxT: Math.min(dPrev, dNext) / 2,
+  };
+}
+
+// Every roundable corner of an anchor list, for the Direct Selection corner
+// widgets: { index, V, dir, t, maxT, edgeMin }. `dir` = uPrev + uNext points
+// into the shape along the corner's bisector; V + dir·t is the inner corner of
+// the fillet (for a right angle, the centre of its arc). `t` is the trim the
+// given radius produces at this corner.
+export function roundableCorners(anchors, closed, radius = 0) {
+  if (!Array.isArray(anchors)) return [];
+  const out = [];
+  anchors.forEach((_, i) => {
+    const c = cornerAt(anchors, closed, i);
+    if (!c) return;
+    const dir = { x: c.uPrev.x + c.uNext.x, y: c.uPrev.y + c.uNext.y };
+    if (Math.hypot(dir.x, dir.y) < 1e-6) return; // a straight-through vertex has no corner
+    out.push({ index: i, V: c.V, dir, t: Math.min(Math.max(radius, 0), c.maxT), maxT: c.maxT, edgeMin: c.edgeMin });
+  });
+  return out;
+}
+
 // Rounded-corner variant. Returns a `d` string, or "" if there's nothing to
 // round (fewer than 2 anchors) so the caller falls back to the plain builder.
 function anchorsToRoundedPath(anchors, closed, radius) {
   const n = anchors.length;
   if (n < 2) return "";
   const p = (v) => round(v);
-  const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
-  const prevIdx = (i) => (i - 1 + n) % n;
   const nextIdx = (i) => (i + 1) % n;
 
-  // Is vertex i a roundable hard corner? Needs neighbours (interior for open
-  // paths), no handles of its own, and straight segments on both sides.
   function roundInfo(i) {
-    if (!closed && (i === 0 || i === n - 1)) return null;
-    const v = anchors[i];
-    if (!v || v.cin || v.cout) return null;
-    const pv = anchors[prevIdx(i)];
-    const nx = anchors[nextIdx(i)];
-    if (!pv || !nx) return null;
-    // A neighbouring outgoing/incoming handle would make the shared segment a
-    // curve — don't trim into a curve.
-    if (pv.cout || nx.cin) return null;
-    const dPrev = dist(pv, v);
-    const dNext = dist(v, nx);
-    if (dPrev < 1e-6 || dNext < 1e-6) return null;
-    const t = Math.min(radius, dPrev / 2, dNext / 2);
+    const c = cornerAt(anchors, closed, i);
+    if (!c) return null;
+    const t = Math.min(radius, c.maxT);
     if (t < 1e-4) return null;
-    const uPrev = { x: (pv.x - v.x) / dPrev, y: (pv.y - v.y) / dPrev };
-    const uNext = { x: (nx.x - v.x) / dNext, y: (nx.y - v.y) / dNext };
+    const { V, uPrev, uNext } = c;
     return {
-      A: { x: v.x + uPrev.x * t, y: v.y + uPrev.y * t }, // approach (from prev)
-      B: { x: v.x + uNext.x * t, y: v.y + uNext.y * t }, // depart (toward next)
-      V: { x: v.x, y: v.y },
+      A: { x: V.x + uPrev.x * t, y: V.y + uPrev.y * t }, // approach (from prev)
+      B: { x: V.x + uNext.x * t, y: V.y + uNext.y * t }, // depart (toward next)
+      V,
     };
   }
 

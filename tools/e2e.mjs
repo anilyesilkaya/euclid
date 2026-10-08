@@ -112,6 +112,7 @@ const KEYS = {
   Escape: { code: 'Escape', windowsVirtualKeyCode: 27 },
   a: { code: 'KeyA', windowsVirtualKeyCode: 65 },
   g: { code: 'KeyG', windowsVirtualKeyCode: 71 },
+  z: { code: 'KeyZ', windowsVirtualKeyCode: 90 },
 };
 export const MOD = { ctrl: 2, shift: 8 };
 

@@ -88,6 +88,13 @@
         <h2>Properties</h2>
         <div id="props-empty" class="empty">No selection</div>
         <div id="props-form" hidden>
+          <div class="transform-grid" id="transform-grid">
+            <label class="tf-x" title="X position of the left edge">X <input type="number" id="p-x" step="1"></label>
+            <label class="tf-y" title="Y position of the top edge">Y <input type="number" id="p-y" step="1"></label>
+            <label class="tf-w" title="Width">W <input type="number" id="p-w" min="0" step="1"></label>
+            <button type="button" id="p-lock" class="lock-btn" title="Constrain proportions: change width and height together" aria-pressed="false"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1.2 1.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1.2-1.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+            <label class="tf-h" title="Height">H <input type="number" id="p-h" min="0" step="1"></label>
+          </div>
           <label>Fill
             <span class="opacity-group">
               <select id="p-fill-type" class="paint-type">

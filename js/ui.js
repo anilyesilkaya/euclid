@@ -5,7 +5,7 @@ import {
   mutate, newId, findNode, findParent, findPath, walk, removeByIds, emptyTransform,
 } from "./state.js";
 import * as history from "./history.js";
-import { setTool, getTool, cancelPolyline, cancelPen, finishPen, isTextEditing, openLabelEditor, transformAgain } from "./tools.js";
+import { setTool, getTool, cancelPolyline, cancelPen, finishPen, isTextEditing, openLabelEditor, transformAgain, selectionBox, setSelectionBox } from "./tools.js";
 import { align } from "./align.js";
 import * as persist from "./persist.js";
 import { getGradient, isValidGradient, defaultLinearGradient } from "./paint.js";
@@ -38,6 +38,9 @@ let openFlyout = null; // { slot, el } while a flyout is visible
 
 let propsEmpty, propsForm, pFill, pFillNone, pStroke, pStrokeNone, pStrokeWidth, pOpacity, pOpacityNum;
 let pText, pFontSize, pFontFamily, pTextColor, pRotation;
+let transformGrid, pX, pY, pW, pH, pLock;
+// Proportions lock between W and H (the chain-link button); off by default.
+let lockProportions = false;
 let pConnectorRoute, connectorDivider, connectorRouteRow;
 let pArrowStart, pArrowEnd, connectorArrowStartRow, connectorArrowEndRow;
 let pathDivider, pShapeToggle, pathCornerRow, pCornerRadius, pCornerRadiusNum;
@@ -256,6 +259,12 @@ function wireProperties(root) {
   pFontFamily = root.querySelector("#p-font-family");
   pTextColor = root.querySelector("#p-text-color");
   pRotation = root.querySelector("#p-rotation");
+  transformGrid = root.querySelector("#transform-grid");
+  pX = root.querySelector("#p-x");
+  pY = root.querySelector("#p-y");
+  pW = root.querySelector("#p-w");
+  pH = root.querySelector("#p-h");
+  pLock = root.querySelector("#p-lock");
   pConnectorRoute = root.querySelector("#p-connector-route");
   connectorDivider = root.querySelector("#connector-divider");
   connectorRouteRow = root.querySelector("#connector-route-row");
@@ -412,6 +421,17 @@ function wireProperties(root) {
 
   pTextColor.addEventListener("input", () => applyTextColor(pTextColor.value));
   pTextColor.addEventListener("change", () => historyCommitAfter(() => applyTextColor(pTextColor.value)));
+
+  // X / Y / W / H of the selection's bounding box. Applied on commit (Enter,
+  // blur, spinner) rather than per keystroke, so typing "250" doesn't flash
+  // the shape through widths 2 and 25 first; one history entry per edit.
+  for (const [input, key] of [[pX, "x"], [pY, "y"], [pW, "width"], [pH, "height"]]) {
+    input.addEventListener("change", () => applyBoxField(key, input));
+  }
+  pLock.addEventListener("click", () => {
+    lockProportions = !lockProportions;
+    pLock.setAttribute("aria-pressed", String(lockProportions));
+  });
 
   // Rotation (degrees). Live-preview on input, one history entry per edit.
   pRotation.addEventListener("input", () => {
@@ -643,6 +663,24 @@ function applyRotation(deg) {
       n.transform.rot = deg;
     }
   });
+}
+
+// Set one of X / Y / W / H from its input. With the proportions lock on, a new
+// width scales the height to match (and vice versa). Bad input (empty,
+// non-numeric, or a size <= 0) reverts the field — directly, since the panel
+// refresh leaves a focused field alone.
+function applyBoxField(key, input) {
+  const box = selectionBox();
+  const raw = input.value;
+  const v = Number(raw);
+  if (!box || raw === "" || !Number.isFinite(v) || ((key === "width" || key === "height") && v <= 0)) {
+    if (box) input.value = Math.round(box[key] * 100) / 100;
+    return;
+  }
+  const target = { ...box, [key]: v };
+  if (lockProportions && key === "width" && box.width > 0) target.height = box.height * (v / box.width);
+  if (lockProportions && key === "height" && box.height > 0) target.width = box.width * (v / box.height);
+  setSelectionBox(target);
 }
 
 function cssEscapeLocal(s) {
@@ -921,6 +959,16 @@ export function refreshPropertyPanel() {
   }
   propsEmpty.hidden = true;
   propsForm.hidden = false;
+
+  // X / Y / W / H: the selection's canvas bounding box (hidden for a
+  // connectors-only selection, which has no box of its own to move or scale).
+  const box = selectionBox();
+  transformGrid.hidden = !box;
+  if (box) {
+    for (const [input, v] of [[pX, box.x], [pY, box.y], [pW, box.width], [pH, box.height]]) {
+      if (document.activeElement !== input) input.value = Math.round(v * 100) / 100;
+    }
+  }
 
   // Distribute needs 3+ items; align always works (single-item aligns to canvas).
   const canDistribute = ids.length >= 3;

@@ -8,7 +8,7 @@
   "scripts": {
     "build": "esbuild js/main.js --bundle --format=iife --outfile=js/euclid.bundle.js",
     "watch": "esbuild js/main.js --bundle --format=iife --outfile=js/euclid.bundle.js --watch",
-    "test": "node tools/test-image.mjs && node tools/test-connector.mjs"
+    "test": "node tools/test-image.mjs && node tools/test-connector.mjs && node tools/test-corners.mjs && node tools/test-transform.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"
