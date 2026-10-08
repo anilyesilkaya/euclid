@@ -244,7 +244,7 @@ function localBBoxOfNode(node) {
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
   }
   const a = node.attrs;
-  if (node.type === "rect") return { x: a.x, y: a.y, width: a.width, height: a.height };
+  if (node.type === "rect" || node.type === "image") return { x: a.x, y: a.y, width: a.width, height: a.height };
   if (node.type === "circle") return { x: a.cx - a.r, y: a.cy - a.r, width: a.r * 2, height: a.r * 2 };
   if (node.type === "ellipse") return { x: a.cx - a.rx, y: a.cy - a.ry, width: a.rx * 2, height: a.ry * 2 };
   if (node.type === "line") {
@@ -407,7 +407,12 @@ export function refreshSourcePanel() {
   if (!sourcePanel) return;
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
-    sourcePanel.textContent = serialize();
+    // Embedded images can be megabytes of base64 — elide them in the on-screen
+    // preview only (Copy / Export SVG still emit the full data).
+    sourcePanel.textContent = serialize().replace(
+      /(href="data:[^;,"]*(?:;base64)?,)([^"]{64})[^"]{64,}"/g,
+      (_, head, keep) => `${head}${keep}…"`,
+    );
   }, 40);
 }
 

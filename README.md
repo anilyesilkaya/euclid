@@ -48,6 +48,15 @@ Euclid prioritizes:
 
 Hold `Shift` while drawing to constrain rectangles and ellipses to squares and circles, or lines to 45° increments.
 
+### Images
+
+Click **Image** (in the SVG source panel) to place a picture from a URL or browse for a file on your computer, or drop an image file straight onto the canvas. PNG, JPEG, GIF, WebP and SVG are supported.
+
+- Local files are embedded as `data:` URLs, so Save and Export SVG stay self-contained.
+- URL images are embedded too when the server allows a CORS fetch; otherwise they are linked by URL (the exported SVG then depends on that URL).
+- Corner drags keep the image's aspect ratio; hold `Shift` to resize freely.
+- Large embedded images may exceed the browser's autosave quota — use **Save** to keep them.
+
 ### Vector editing
 
 Euclid provides two Illustrator-style selection modes:
@@ -465,6 +474,7 @@ js/
   ui.js                 Toolbar and property panel
   export.js             SVG serialization
   import.js             Strict SVG parser
+  image.js              Image placement (URL / file / drop)
   persist.js            Save / open / autosave
   paths.js              Structured Bézier path model
   paint.js              Gradient model

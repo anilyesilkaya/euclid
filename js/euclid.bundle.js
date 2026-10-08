@@ -718,7 +718,7 @@
   }
   function localBBoxOfShapeNode(node) {
     const a = node.attrs;
-    if (node.type === "rect") return { x: a.x, y: a.y, width: a.width, height: a.height };
+    if (node.type === "rect" || node.type === "image") return { x: a.x, y: a.y, width: a.width, height: a.height };
     if (node.type === "circle") return { x: a.cx - a.r, y: a.cy - a.r, width: a.r * 2, height: a.r * 2 };
     if (node.type === "ellipse") return { x: a.cx - a.rx, y: a.cy - a.ry, width: a.rx * 2, height: a.ry * 2 };
     if (node.type === "line") {
@@ -2597,6 +2597,16 @@
     mutate((root) => {
       const n = findNode(root, id);
       if (!n) return;
+      if (n.type === "image") {
+        const a = orig.attrs;
+        const box = { x: a.x, y: a.y, width: a.width, height: a.height };
+        const { sx, sy, ax, ay } = computeScale(box, dir, dx, dy, !_e?.shiftKey);
+        n.attrs.x = ax + (a.x - ax) * sx;
+        n.attrs.y = ay + (a.y - ay) * sy;
+        n.attrs.width = a.width * sx;
+        n.attrs.height = a.height * sy;
+        return;
+      }
       resizeNode(n, orig, dir, dx, dy);
     });
   }
@@ -2631,7 +2641,7 @@
       }
       return { x: nx, y: ny, w: nw, h: nh };
     };
-    if (n.type === "rect") {
+    if (n.type === "rect" || n.type === "image") {
       const r3 = applyBox(orig.attrs.x, orig.attrs.y, orig.attrs.width, orig.attrs.height);
       n.attrs.x = r3.x;
       n.attrs.y = r3.y;
@@ -2736,7 +2746,7 @@
   function scaleGeom(node, sx, sy) {
     const a = node.attrs;
     const avg = (Math.abs(sx) + Math.abs(sy)) / 2;
-    if (node.type === "rect") {
+    if (node.type === "rect" || node.type === "image") {
       a.x *= sx;
       a.y *= sy;
       a.width *= sx;
@@ -3495,10 +3505,10 @@
   }
   function mount4(root) {
     const saveBtn = root.querySelector("#save-btn");
-    const openBtn2 = root.querySelector("#open-btn");
+    const openBtn3 = root.querySelector("#open-btn");
     fileInput = root.querySelector("#open-file");
     if (saveBtn) saveBtn.addEventListener("click", saveToFile);
-    if (openBtn2) openBtn2.addEventListener("click", triggerOpen);
+    if (openBtn3) openBtn3.addEventListener("click", triggerOpen);
     if (fileInput) {
       fileInput.addEventListener("change", () => {
         const file = fileInput.files && fileInput.files[0];
@@ -4881,8 +4891,8 @@
   }
   function computeTightViewBox() {
     const docLayer2 = document.getElementById("doc-layer");
-    const canvasSvg3 = docLayer2?.ownerSVGElement;
-    if (!docLayer2 || !canvasSvg3) return DEFAULT_VIEWBOX;
+    const canvasSvg4 = docLayer2?.ownerSVGElement;
+    if (!docLayer2 || !canvasSvg4) return DEFAULT_VIEWBOX;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const el of docLayer2.children) {
       const bb = elementBBoxInCanvas(el);
@@ -5028,7 +5038,7 @@
       return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
     }
     const a = node.attrs;
-    if (node.type === "rect") return { x: a.x, y: a.y, width: a.width, height: a.height };
+    if (node.type === "rect" || node.type === "image") return { x: a.x, y: a.y, width: a.width, height: a.height };
     if (node.type === "circle") return { x: a.cx - a.r, y: a.cy - a.r, width: a.r * 2, height: a.r * 2 };
     if (node.type === "ellipse") return { x: a.cx - a.rx, y: a.cy - a.ry, width: a.rx * 2, height: a.ry * 2 };
     if (node.type === "line") {
@@ -5165,7 +5175,10 @@
     if (!sourcePanel) return;
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      sourcePanel.textContent = serialize();
+      sourcePanel.textContent = serialize().replace(
+        /(href="data:[^;,"]*(?:;base64)?,)([^"]{64})[^"]{64,}"/g,
+        (_, head, keep) => `${head}${keep}\u2026"`
+      );
     }, 40);
   }
   function fallbackCopy(text) {
@@ -5681,6 +5694,286 @@
     closeModal();
   }
 
+  // js/image.js
+  var MAX_FIT = 0.6;
+  var LARGE_BYTES = 4 * 1024 * 1024;
+  var canvasSvg3;
+  var modal2;
+  var urlInput;
+  var embedChk;
+  var browseBtn;
+  var fileInput2;
+  var preview;
+  var previewImg;
+  var previewMeta;
+  var errorBox2;
+  var confirmBtn2;
+  var cancelBtn2;
+  var openBtn2;
+  var pending2 = null;
+  var loadToken = 0;
+  function mountImage(root, svg3) {
+    canvasSvg3 = svg3;
+    modal2 = root.querySelector("#image-modal");
+    urlInput = root.querySelector("#image-url");
+    embedChk = root.querySelector("#image-embed");
+    browseBtn = root.querySelector("#image-browse");
+    fileInput2 = root.querySelector("#image-file");
+    preview = root.querySelector("#image-preview");
+    previewImg = root.querySelector("#image-preview-img");
+    previewMeta = root.querySelector("#image-preview-meta");
+    errorBox2 = root.querySelector("#image-error");
+    confirmBtn2 = root.querySelector("#image-confirm");
+    cancelBtn2 = root.querySelector("#image-cancel");
+    openBtn2 = root.querySelector("#image-btn");
+    openBtn2.addEventListener("click", openModal2);
+    cancelBtn2.addEventListener("click", closeModal2);
+    confirmBtn2.addEventListener("click", confirm);
+    browseBtn.addEventListener("click", () => fileInput2.click());
+    fileInput2.addEventListener("change", () => {
+      const file = fileInput2.files && fileInput2.files[0];
+      fileInput2.value = "";
+      if (file) stageFile(file);
+    });
+    urlInput.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      if (pending2 && pending2.source === urlInput.value.trim()) confirm();
+      else stageUrl();
+    });
+    urlInput.addEventListener("change", stageUrl);
+    embedChk.addEventListener("change", () => {
+      if (pending2 && pending2.source) {
+        pending2 = null;
+        stageUrl();
+      }
+    });
+    modal2.addEventListener("click", (e) => {
+      if (e.target === modal2) closeModal2();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (modal2.hidden) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeModal2();
+      }
+    });
+    for (const target of [svg3, modal2]) {
+      target.addEventListener("dragover", (e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      });
+      target.addEventListener("drop", (e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        const file = firstImageFile(e.dataTransfer);
+        if (target === modal2) {
+          if (file) stageFile(file);
+          else showError("Only image files can be placed.");
+          return;
+        }
+        if (!file) {
+          alert("Only image files can be placed.");
+          return;
+        }
+        readFile(file).then(placeImage, (err) => alert(err.message));
+      });
+    }
+  }
+  function openModal2() {
+    reset();
+    modal2.hidden = false;
+    setTimeout(() => urlInput.focus(), 0);
+  }
+  function closeModal2() {
+    modal2.hidden = true;
+    loadToken++;
+  }
+  function reset() {
+    pending2 = null;
+    loadToken++;
+    urlInput.value = "";
+    showError("");
+    preview.hidden = true;
+    previewImg.removeAttribute("src");
+  }
+  function showError(msg) {
+    errorBox2.textContent = msg;
+    errorBox2.hidden = !msg;
+  }
+  function setPending(img) {
+    pending2 = img;
+    previewImg.src = img.href;
+    const source = !img.linked ? `embedded, ${formatBytes(dataUrlBytes(img.href))}` : embedChk.checked ? "linked by URL (the server doesn't allow embedding)" : "linked by URL";
+    previewMeta.textContent = `${img.width} \xD7 ${img.height} px \xB7 ${source}`;
+    preview.hidden = false;
+    showError("");
+  }
+  async function stageUrl() {
+    const raw = urlInput.value.trim();
+    if (!raw) return;
+    if (pending2 && pending2.source === raw) return;
+    pending2 = null;
+    const token = ++loadToken;
+    showError("");
+    try {
+      const img = await loadFromUrl(raw, embedChk.checked);
+      if (token !== loadToken) return;
+      img.source = raw;
+      setPending(img);
+    } catch (err) {
+      if (token !== loadToken) return;
+      pending2 = null;
+      preview.hidden = true;
+      showError(err.message);
+    }
+  }
+  async function stageFile(file) {
+    const token = ++loadToken;
+    showError("");
+    try {
+      const img = await readFile(file);
+      if (token !== loadToken) return;
+      urlInput.value = "";
+      setPending(img);
+    } catch (err) {
+      if (token !== loadToken) return;
+      showError(err.message);
+    }
+  }
+  async function confirm() {
+    if (!pending2) {
+      if (!urlInput.value.trim()) {
+        showError("Enter an image URL or choose a file.");
+        return;
+      }
+      await stageUrl();
+    }
+    if (!pending2 || modal2.hidden) return;
+    placeImage(pending2);
+    closeModal2();
+  }
+  async function loadFromUrl(raw, embed = true) {
+    let url;
+    try {
+      url = new URL(raw, document.baseURI);
+    } catch {
+      throw new Error("That doesn't look like a valid URL.");
+    }
+    if (!["http:", "https:", "data:", "blob:", "file:"].includes(url.protocol)) {
+      throw new Error(`Unsupported URL scheme "${url.protocol}" \u2014 use http(s) or data: URLs.`);
+    }
+    if (url.protocol === "data:") {
+      if (!/^data:image\//i.test(url.href)) throw new Error("data: URL is not an image.");
+      return { ...await measure(url.href), href: url.href, linked: false };
+    }
+    const size = await measure(url.href).catch(() => {
+      throw new Error("Couldn't load an image from that URL.");
+    });
+    if (embed && url.protocol !== "file:") {
+      try {
+        const res = await fetch(url.href, { mode: "cors" });
+        if (res.ok) {
+          const blob = await res.blob();
+          if (blob.type.startsWith("image/")) {
+            return { ...size, href: await blobToDataUrl(blob), linked: false };
+          }
+        }
+      } catch {
+      }
+    }
+    return { ...size, href: url.href, linked: true };
+  }
+  async function readFile(file) {
+    if (!file.type.startsWith("image/")) {
+      throw new Error(`"${file.name || "File"}" is not an image.`);
+    }
+    const href = await blobToDataUrl(file);
+    const size = await measure(href).catch(() => {
+      throw new Error(`Couldn't decode "${file.name || "image"}".`);
+    });
+    return { ...size, href, linked: false };
+  }
+  function measure(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const width = img.naturalWidth || 300;
+        const height = img.naturalHeight || 150;
+        resolve({ width, height });
+      };
+      img.onerror = () => reject(new Error("Image failed to load"));
+      img.src = src;
+    });
+  }
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Couldn't read the file."));
+      reader.readAsDataURL(blob);
+    });
+  }
+  function placeImage({ href, width, height, linked }) {
+    const view = visibleBox();
+    const fit2 = Math.min(1, view.width * MAX_FIT / width, view.height * MAX_FIT / height);
+    const w = width * fit2, h = height * fit2;
+    const node = {
+      id: newId("img"),
+      type: "image",
+      attrs: {
+        x: round5(view.x + (view.width - w) / 2),
+        y: round5(view.y + (view.height - h) / 2),
+        width: round5(w),
+        height: round5(h),
+        href,
+        // The box always equals the drawn image; aspect is kept by the resize gesture.
+        preserveAspectRatio: "none"
+      },
+      transform: emptyTransform()
+    };
+    record(() => {
+      mutate((root) => {
+        root.children.push(node);
+      });
+    });
+    setSelection([node.id]);
+    if (!linked && dataUrlBytes(href) > LARGE_BYTES) {
+      console.warn("Euclid: large embedded image \u2014 it may exceed the autosave limit; use Save to keep it.");
+    }
+    return node;
+  }
+  function visibleBox() {
+    const vb2 = canvasSvg3?.viewBox?.baseVal;
+    if (vb2 && vb2.width > 0 && vb2.height > 0) return { x: vb2.x, y: vb2.y, width: vb2.width, height: vb2.height };
+    return { x: 0, y: 0, width: 1e3, height: 700 };
+  }
+  function hasFiles(e) {
+    return !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+  }
+  function firstImageFile(dt) {
+    if (!dt) return null;
+    for (const f of Array.from(dt.files || [])) if (f.type.startsWith("image/")) return f;
+    for (const item of Array.from(dt.items || [])) {
+      if (item.kind === "file" && item.type.startsWith("image/")) return item.getAsFile();
+    }
+    return null;
+  }
+  function dataUrlBytes(href) {
+    if (!href.startsWith("data:")) return 0;
+    const comma = href.indexOf(",");
+    return Math.floor((href.length - comma - 1) * 3 / 4);
+  }
+  function formatBytes(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+    return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  }
+  function round5(n) {
+    return Math.round(n * 100) / 100;
+  }
+
   // js/layers.js
   var collapsed = /* @__PURE__ */ new Set();
   var DRAG_THRESHOLD2 = 4;
@@ -5762,6 +6055,8 @@
         return s(`<polyline points="2,10 5,5 9,8 12,3" ${stroke}/>`);
       case "path":
         return s(`<path d="M2,10 C4,4 9,4 12,10" ${stroke}/>`);
+      case "image":
+        return s(`<rect x="1.5" y="2.5" width="11" height="9" ${stroke}/><path d="M2,11 6,6.5 9,9.5 10.5,8 12.5,10.5" ${stroke}/><circle cx="9.5" cy="5.5" r="1" fill="currentColor"/>`);
       case "text":
         return s(`<text x="7" y="11" text-anchor="middle" font-family="serif" font-size="12" font-weight="700" fill="currentColor">T</text>`);
       case "group":
@@ -6134,6 +6429,7 @@
     document.getElementById("tight-mode")
   );
   mountImport(document);
+  mountImage(document, svg2);
   mount6(document);
   mount4(document);
   restoreAutosave();

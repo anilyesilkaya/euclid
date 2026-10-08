@@ -94,6 +94,7 @@ function iconFor(node) {
     case "connector":return s(`<line x1="2" y1="11" x2="10" y2="3" ${stroke}/><path d="M8,1.5 12,3 10.5,6.5z" fill="currentColor"/>`);
     case "polyline": return s(`<polyline points="2,10 5,5 9,8 12,3" ${stroke}/>`);
     case "path":     return s(`<path d="M2,10 C4,4 9,4 12,10" ${stroke}/>`);
+    case "image":    return s(`<rect x="1.5" y="2.5" width="11" height="9" ${stroke}/><path d="M2,11 6,6.5 9,9.5 10.5,8 12.5,10.5" ${stroke}/><circle cx="9.5" cy="5.5" r="1" fill="currentColor"/>`);
     case "text":     return s(`<text x="7" y="11" text-anchor="middle" font-family="serif" font-size="12" font-weight="700" fill="currentColor">T</text>`);
     case "group":    return s(`<rect x="2" y="4" width="8" height="7" ${stroke}/><rect x="4" y="2" width="8" height="7" ${stroke}/>`);
     default:         return s(`<circle cx="7" cy="7" r="1.5" fill="currentColor"/>`);
