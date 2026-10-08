@@ -362,6 +362,17 @@ If you want to load the ES modules directly during development, serve the direct
 python -m http.server
 ```
 
+### Tests
+
+End-to-end tests drive the real UI in headless Chromium over the Chrome DevTools Protocol, with no extra dependencies. They use the Chromium that Playwright caches under `%LOCALAPPDATA%\ms-playwright`. They test the built bundle, so rebuild first:
+
+```bash
+npm run build
+npm test
+```
+
+Pass `--shots <dir>` (`npm test -- --shots out/`) to save a screenshot after each test.
+
 ---
 
 ## Keyboard shortcuts
@@ -486,7 +497,9 @@ js/
   connectors.js         Connector geometry
 
 tools/
+  cdp.mjs               Headless Chromium / DevTools Protocol client
   shot.mjs              Browser screenshot helper
+  test-image.mjs        End-to-end tests for image import
 ```
 
 `js/euclid.bundle.js` is a generated build artifact loaded by `index.html`.
