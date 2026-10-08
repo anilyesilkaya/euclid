@@ -292,6 +292,19 @@ html, body {
   cursor: move;
 }
 #chrome-layer .path-ctrl-handle:hover { fill: var(--accent); }
+/* Direct Selection live-corner widget: drag toward the middle to round corners. */
+#chrome-layer .corner-radius-handle {
+  fill: #ffffff;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
+}
+#chrome-layer .corner-radius-handle:hover { fill: var(--accent); }
+#chrome-layer .corner-radius-dot {
+  fill: var(--accent);
+  pointer-events: none;
+}
 #chrome-layer .path-ctrl-line {
   stroke: var(--accent);
   stroke-width: 1;
@@ -480,6 +493,35 @@ html, body {
   padding: 3px 6px;
 }
 #props-form label.wide { grid-template-columns: auto 1fr; }
+/* X / Y / W / H: two rows of two boxes, the proportions lock between W and H. */
+#props-form .transform-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+#props-form .transform-grid[hidden] { display: none; }
+#props-form .transform-grid label { grid-template-columns: auto 1fr; gap: 6px; }
+#props-form .transform-grid input[type="number"] { width: 100%; min-width: 0; box-sizing: border-box; }
+#props-form .transform-grid .tf-x, #props-form .transform-grid .tf-w { grid-column: 1; }
+#props-form .transform-grid .tf-y, #props-form .transform-grid .tf-h { grid-column: 3; }
+#props-form .transform-grid .lock-btn { grid-column: 2; }
+.lock-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px; height: 24px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.lock-btn:hover { color: var(--text); border-color: var(--border); }
+.lock-btn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: var(--panel-2); }
 #props-form label.wide input[type="text"] {
   width: 100%; background: var(--panel-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px;
@@ -907,9 +949,10 @@ html, body {
   overflow: visible;
 }
 
-/* Live angle tooltip shown while dragging the rotate handle. Positioned in
-   screen coords from tools.js so it doesn't scale with zoom. */
-.rotation-readout {
+/* Live angle / corner-radius tooltip shown while dragging the rotate handle or
+   a corner widget. Positioned in screen coords from tools.js so it doesn't
+   scale with zoom. */
+.drag-readout {
   position: absolute;
   z-index: 10;
   padding: 2px 6px;

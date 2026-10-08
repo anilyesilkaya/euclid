@@ -10,7 +10,7 @@ import { toCanvasPoint, toLocalPoint, getTransientLayer, getDocLayer, elementBBo
 import * as guides from "./guides.js";
 import * as grid from "./grid.js";
 import { routeOrthogonal, portsFor } from "./connectors.js";
-import { anchorsToPath, shapeToAnchors, GEOMETRY_ATTRS } from "./paths.js";
+import { anchorsToPath, shapeToAnchors, roundableCorners, GEOMETRY_ATTRS } from "./paths.js";
 
 const CANVAS_BBOX = { x: 0, y: 0, width: 1000, height: 700 };
 const SNAP_THRESHOLD = 6; // canvas units — feels right at default zoom
@@ -127,6 +127,7 @@ function onPointerDown(e) {
   if (role === "rotate") return startRotate(e, target, p);
   if (role === "waypoint" || role === "waypoint-add") return startWaypointDrag(e, target, p);
   if (role === "path-anchor" || role === "path-handle") return startPathPointDrag(e, target, p);
+  if (role === "corner-radius") return startCornerRadius(e, target);
 
   if (isSelectTool(currentTool)) return handleSelectDown(e, p, target);
 
@@ -191,6 +192,8 @@ function onPointerMove(e) {
     updatePenDrag(p, e);
   } else if (gesture.type === "path-point") {
     updatePathPoint(e);
+  } else if (gesture.type === "corner-radius") {
+    updateCornerRadius(e);
   } else if (gesture.type === "marquee") {
     updateMarquee(p);
   } else if (gesture.type === "connector") {
@@ -204,7 +207,7 @@ function updateHover(e) {
   const role = e.target.getAttribute && e.target.getAttribute("data-role");
   if (role === "resize" || role === "resize-multi" || role === "rotate" ||
       role === "waypoint" || role === "waypoint-add" ||
-      role === "path-anchor" || role === "path-handle") { setHover(null); return; }
+      role === "path-anchor" || role === "path-handle" || role === "corner-radius") { setHover(null); return; }
   const hit = hitTest(e.target);
   const id = hit ? pickSelectionId(hit.id) : null;
   setHover(id);
@@ -265,7 +268,7 @@ function onPointerUp(e) {
         };
       }
     } else history.abort();
-    if (g.type === "rotate") hideRotationReadout();
+    if (g.type === "rotate") hideReadout();
   } else if (g.type === "waypoint") {
     // A real drag committed a moved/inserted waypoint; a click that never
     // crossed the threshold inserted nothing, so drop the transaction.
@@ -277,6 +280,10 @@ function onPointerUp(e) {
   } else if (g.type === "path-point") {
     if (g.moved) history.commit("edit path");
     else history.abort();
+  } else if (g.type === "corner-radius") {
+    if (g.moved) history.commit("corner radius");
+    else history.abort();
+    hideReadout();
   }
 
   clearTransient();
@@ -1228,6 +1235,135 @@ function startPathPointDrag(e, handleEl, p) {
   };
 }
 
+// --- Selection box (properties panel X / Y / W / H) ---
+
+// The top-level nodes the selection moves and scales as a unit. Connectors have
+// derived geometry — they follow their endpoints, so they can't be scaled.
+function transformableTopIds() {
+  const doc = getDoc();
+  const ids = new Set();
+  for (const id of getSelection()) {
+    const top = topAncestor(doc, id);
+    if (top && top.type !== "connector") ids.add(top.id);
+  }
+  return ids;
+}
+
+// Union canvas-space AABB of the given nodes' rendered elements, or null.
+function canvasBoxOf(ids) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const id of ids) {
+    const el = getDocLayer().querySelector(`[data-id="${cssEscape(id)}"]`);
+    const b = el && elementBBoxInCanvas(el);
+    if (!b) continue;
+    minX = Math.min(minX, b.x1); minY = Math.min(minY, b.y1);
+    maxX = Math.max(maxX, b.x2); maxY = Math.max(maxY, b.y2);
+  }
+  return isFinite(minX) ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY } : null;
+}
+
+// Canvas-space bounding box of the selection (what X / Y / W / H show), or null
+// when nothing movable is selected (e.g. only connectors).
+export function selectionBox() {
+  return canvasBoxOf(transformableTopIds());
+}
+
+// Move and scale the selection so its bounding box becomes `target` — scaled
+// about its top-left corner (the same math as the resize handles), then moved
+// there. A zero-size axis (a horizontal line's height) can't scale and is left
+// alone. One undo entry.
+export function setSelectionBox(target) {
+  const ids = transformableTopIds();
+  const box = canvasBoxOf(ids);
+  if (!box) return;
+  const sx = box.width > 0 ? target.width / box.width : 1;
+  const sy = box.height > 0 ? target.height / box.height : 1;
+  const dx = target.x - box.x, dy = target.y - box.y;
+  history.record(() => {
+    mutate((root) => {
+      for (const id of ids) {
+        const n = findNode(root, id);
+        if (!n) continue;
+        if (sx !== 1 || sy !== 1) scaleSubtree(n, box.x, box.y, sx, sy);
+        if (!n.transform) n.transform = emptyTransform();
+        n.transform.tx = (n.transform.tx || 0) + dx;
+        n.transform.ty = (n.transform.ty || 0) + dy;
+      }
+    });
+  });
+}
+
+// --- Live-corner widget gesture (Direct Selection) ---
+//
+// Dragging a corner widget along its corner's bisector sets the shape's corner
+// radius — rx/ry on a rect (it stays a rect), cornerRadius on a pen path — so
+// every corner rounds together. The radius changes by how far the pointer has
+// moved along the bisector since the press (no jump on grab), clamped between
+// sharp and the largest fillet this corner can hold.
+
+function startCornerRadius(e, handleEl) {
+  const id = handleEl.getAttribute("data-id");
+  const index = Number(handleEl.getAttribute("data-index"));
+  const node = findNode(getDoc(), id);
+  const shape = node && roundableShape(node);
+  if (!shape) return;
+  const corner = roundableCorners(shape.anchors, shape.closed, shape.radius).find((c) => c.index === index);
+  if (!corner) return;
+  history.beginTransaction();
+  const p = toCanvasPoint(e);
+  gesture = {
+    type: "corner-radius",
+    origin: p, last: p, moved: false,
+    id, corner,
+    startT: corner.t,
+    startProj: bisectorT(corner, cornerLocalPoint(e, id)),
+  };
+  // Show the current radius as soon as the widget is grabbed.
+  showReadout(formatRadius(shape.radius), p);
+}
+
+function updateCornerRadius(e) {
+  const { id, corner, startT, startProj } = gesture;
+  const t = Math.min(corner.maxT, Math.max(0, startT + bisectorT(corner, cornerLocalPoint(e, id)) - startProj));
+  const r = round2(t);
+  showReadout(formatRadius(r), toCanvasPoint(e));
+  mutate((root) => {
+    const n = findNode(root, id);
+    if (!n) return;
+    if (n.type === "rect") {
+      if (r > 0) { n.attrs.rx = r; n.attrs.ry = r; }
+      else { delete n.attrs.rx; delete n.attrs.ry; }
+    } else if (r > 0) n.cornerRadius = r;
+    else delete n.cornerRadius;
+  });
+}
+
+// The anchor outline whose corners the widgets round, or null: a rect (via its
+// derived anchors and rx) or a pen path that isn't in shape mode.
+function roundableShape(node) {
+  if (node.type === "rect") {
+    const d = shapeToAnchors(node);
+    return d && { anchors: d.anchors, closed: true, radius: node.attrs.rx || 0 };
+  }
+  if (node.type === "path" && Array.isArray(node.anchors) && !node.shapeMode) {
+    return { anchors: node.anchors, closed: !!node.closed, radius: node.cornerRadius || 0 };
+  }
+  return null;
+}
+
+// Pointer in the shape's local space (the widgets live there, so they rotate
+// with it). The element is re-queried: every mutate() rebuilds #doc-layer.
+function cornerLocalPoint(e, id) {
+  const el = getDocLayer().querySelector(`[data-id="${cssEscape(id)}"]`);
+  return el ? toLocalPoint(e, el) : toCanvasPoint(e);
+}
+
+// Position of `p` along a corner's bisector, in trim units (V + dir·t).
+function bisectorT(corner, p) {
+  const { V, dir } = corner;
+  return ((p.x - V.x) * dir.x + (p.y - V.y) * dir.y) / (dir.x * dir.x + dir.y * dir.y);
+}
+
 // First real drag on a primitive shape's joint: bake it into an editable path so
 // subsequent frames mutate node.anchors like any pen path.
 function beginPathPointPayload() {
@@ -1368,30 +1504,14 @@ function safeGetBBox(el) {
 function startResizeMulti(e, handleEl, p) {
   const dir = handleEl.getAttribute("data-handle");
   const doc = getDoc();
-  const topIds = new Set();
-  for (const id of getSelection()) {
-    const top = topAncestor(doc, id);
-    // Connectors have derived geometry — they follow their endpoints, can't be scaled.
-    if (top && top.type !== "connector") topIds.add(top.id);
-  }
-  if (topIds.size === 0) return;
-
-  // Union bbox in canvas (viewBox) coords from each node's projected element bbox.
+  const topIds = transformableTopIds();
+  const bbox = canvasBoxOf(topIds);
+  if (!bbox) return;
   const snapshots = new Map();
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const id of topIds) {
     const node = findNode(doc, id);
-    if (!node) continue;
-    snapshots.set(id, structuredClone(node));
-    const el = getDocLayer().querySelector(`[data-id="${cssEscape(id)}"]`);
-    const b = el && elementBBoxInCanvas(el);
-    if (!b) continue;
-    if (b.x1 < minX) minX = b.x1;
-    if (b.y1 < minY) minY = b.y1;
-    if (b.x2 > maxX) maxX = b.x2;
-    if (b.y2 > maxY) maxY = b.y2;
+    if (node) snapshots.set(id, structuredClone(node));
   }
-  if (!isFinite(minX)) return;
 
   history.beginTransaction();
   gesture = {
@@ -1401,7 +1521,7 @@ function startResizeMulti(e, handleEl, p) {
     multi: {
       ids: [...topIds],
       snapshots,
-      bbox: { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+      bbox,
     },
   };
 }
@@ -1731,7 +1851,7 @@ function updateRotate(p, e) {
     n.transform.cx = localCx;
     n.transform.cy = localCy;
   });
-  showRotationReadout(newRot, p);
+  showReadout(formatAngle(newRot), p);
 }
 
 // --- "Transform Again" (Ctrl+D) — Illustrator step-and-repeat ---
@@ -1800,27 +1920,33 @@ function applyRecordedTransform(node, lt) {
   }
 }
 
-// --- Rotation readout box (a tooltip that follows the handle during rotate) ---
+// --- Drag readout (a tooltip that follows the pointer during rotate and
+// corner-radius drags, showing the live angle / radius) ---
 
-let rotationReadoutEl = null;
+let readoutEl = null;
 
-function showRotationReadout(deg, p) {
-  if (!rotationReadoutEl) {
-    rotationReadoutEl = document.createElement("div");
-    rotationReadoutEl.className = "rotation-readout";
-    document.body.appendChild(rotationReadoutEl);
+function showReadout(text, p) {
+  if (!readoutEl) {
+    readoutEl = document.createElement("div");
+    readoutEl.className = "drag-readout";
+    document.body.appendChild(readoutEl);
   }
-  rotationReadoutEl.textContent = formatAngle(deg);
+  readoutEl.textContent = text;
   const s = canvasToScreen(p);
-  rotationReadoutEl.style.left = `${s.x + 16}px`;
-  rotationReadoutEl.style.top = `${s.y + 16}px`;
+  readoutEl.style.left = `${s.x + 16}px`;
+  readoutEl.style.top = `${s.y + 16}px`;
 }
 
-function hideRotationReadout() {
-  if (rotationReadoutEl) {
-    try { rotationReadoutEl.remove(); } catch { /* already detached */ }
-    rotationReadoutEl = null;
+function hideReadout() {
+  if (readoutEl) {
+    try { readoutEl.remove(); } catch { /* already detached */ }
+    readoutEl = null;
   }
+}
+
+// Corner radius as the readout shows it: at most one decimal, like the panel.
+function formatRadius(r) {
+  return `Radius: ${Math.round(r * 10) / 10}`;
 }
 
 // Normalize to [0, 360) and show at most one decimal (so 22.5° reads cleanly).

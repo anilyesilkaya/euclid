@@ -66,6 +66,8 @@ Euclid provides two Illustrator-style selection modes:
 
 Under the Direct Selection tool, a single selected object hides its move/resize bounding box and instead shows a draggable joint at every anchor — mirroring Illustrator's two arrows. This works on *any* shape, not just pen paths: a rectangle, ellipse, circle, line, or polyline shows its joints too, and dragging one converts the primitive into an editable path (one-way, as in Illustrator). So you can push a rectangle's corner to make a quadrilateral, or pull an ellipse out of round.
 
+Rectangles and pen paths also show a small round **corner widget** just inside each sharp corner (Illustrator's live corners). Drag one toward the middle to round every corner of the shape, or back out to the corner to make it sharp again; it stops at the largest radius the corner can hold. A rectangle stays a rectangle (only its corner radius changes), and the value matches the **Corner radius** field in the properties panel.
+
 Pen paths use a structured anchor model. SVG path data is derived from that model rather than being manually edited as a raw `d` string.
 
 You can:
@@ -74,7 +76,7 @@ You can:
 - Break smooth handle pairs with `Alt`
 - Delete anchors and handles
 - Convert closed paths between point-editing and shape-style manipulation
-- Apply live corner rounding to closed paths
+- Apply live corner rounding to rectangles and paths, from the panel or by dragging a corner widget
 
 ### Diagramming
 
@@ -96,6 +98,7 @@ This makes Euclid suitable for architecture diagrams, signal-processing chains, 
 ### Layout and manipulation
 
 - Move, resize, and rotate
+- Exact position and size: **X**, **Y**, **W**, and **H** at the top of the properties panel show the selection's bounding box; type a value and press `Enter` to move or resize it. The chain-link button between **W** and **H** locks the proportions, so changing one scales the other to match. A multi-selection moves and scales as one box.
 - Multi-selection
 - Marquee selection
 - Group / ungroup
@@ -504,6 +507,8 @@ tools/
   shot.mjs              Browser screenshot helper
   test-image.mjs        End-to-end tests for image import
   test-connector.mjs    End-to-end tests for connector connection points
+  test-corners.mjs      End-to-end tests for Direct Selection corner widgets
+  test-transform.mjs    End-to-end tests for the X / Y / W / H fields
 ```
 
 `js/euclid.bundle.js` is a generated build artifact loaded by `index.html`.

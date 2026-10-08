@@ -4,11 +4,13 @@
 
 import { getDoc, getSelection, findNode } from "./state.js";
 import { routeStraight, routeOrthogonal, portNormal, dirOf } from "./connectors.js";
-import { anchorsToPath, anchorsBBox, shapeToAnchors } from "./paths.js";
+import { anchorsToPath, anchorsBBox, shapeToAnchors, roundableCorners } from "./paths.js";
 import { collectGradients, linearGradientElement, paintRef, PAINT_SLOTS } from "./paint.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const HANDLE_SIZE = 8;      // px in screen space (via non-scaling stroke + fixed size)
+const CORNER_WIDGET_MIN = 14;  // px: a sharp corner's radius widget sits this far in along the bisector
+const CORNER_WIDGET_EDGE = 40; // px: corners whose shorter edge is under this get no widget (too cramped)
 const ROT_STEM_LEN = 24;    // px in screen space
 
 let docLayer, chromeHover, chromeSelection, chromeTransient, chromePorts, canvasSvg;
@@ -553,16 +555,19 @@ function drawConnectorSelection(id, el) {
 }
 
 // What to show joints for under Direct Selection, or null if the node isn't
-// anchor-editable. Returns { anchors, closed, cornerRadius } so the chrome can
-// trace the outline from anchors (a primitive's element has no `d` to borrow).
-// Pen paths (not in shape mode) expose their stored anchors; primitive shapes
-// derive a transient anchor list so they get joints too.
+// anchor-editable. Returns { anchors, closed, cornerRadius, roundable } so the
+// chrome can trace the outline from anchors (a primitive's element has no `d` to
+// borrow). Pen paths (not in shape mode) expose their stored anchors; primitive
+// shapes derive a transient anchor list so they get joints too. `roundable`
+// marks the nodes whose corner radius the corner widgets can drag (rects via
+// rx/ry, pen paths via cornerRadius).
 function anchorsForEditing(node) {
   if (!node) return null;
   if (node.type === "path" && Array.isArray(node.anchors) && node.anchors.length && !node.shapeMode) {
-    return { anchors: node.anchors, closed: !!node.closed, cornerRadius: node.cornerRadius || 0 };
+    return { anchors: node.anchors, closed: !!node.closed, cornerRadius: node.cornerRadius || 0, roundable: true };
   }
-  return shapeToAnchors(node);
+  const derived = shapeToAnchors(node);
+  return derived && { ...derived, roundable: node.type === "rect" };
 }
 
 // Direct node-editing chrome for a path/shape: control lines + round bézier-handle
@@ -628,6 +633,38 @@ function drawPathSelection({ id, el }, editable) {
     h.setAttribute("height", hs);
     wrap.appendChild(h);
   });
+
+  if (editable.roundable) drawCornerWidgets(wrap, id, editable, scale);
+}
+
+// Live-corner widgets (Illustrator-style): a ring inside each roundable corner,
+// on the corner's bisector at the fillet's inner corner — so it travels inward
+// as the radius grows. A sharp corner's widget still sits a few px in, clear of
+// the anchor square, so there's something to grab. Dragging one (tools.js)
+// rounds every corner of the shape.
+function drawCornerWidgets(wrap, id, { anchors, closed, cornerRadius }, scale) {
+  for (const c of roundableCorners(anchors, closed, cornerRadius)) {
+    if (c.edgeMin / scale < CORNER_WIDGET_EDGE) continue;
+    const len = Math.hypot(c.dir.x, c.dir.y);
+    const d = Math.max(c.t * len, CORNER_WIDGET_MIN * scale);
+    const x = c.V.x + (c.dir.x / len) * d;
+    const y = c.V.y + (c.dir.y / len) * d;
+    const ring = document.createElementNS(SVG_NS, "circle");
+    ring.setAttribute("class", "corner-radius-handle");
+    ring.setAttribute("data-role", "corner-radius");
+    ring.setAttribute("data-id", id);
+    ring.setAttribute("data-index", c.index);
+    ring.setAttribute("cx", x);
+    ring.setAttribute("cy", y);
+    ring.setAttribute("r", 4.5 * scale);
+    wrap.appendChild(ring);
+    const dot = document.createElementNS(SVG_NS, "circle");
+    dot.setAttribute("class", "corner-radius-dot");
+    dot.setAttribute("cx", x);
+    dot.setAttribute("cy", y);
+    dot.setAttribute("r", 1.5 * scale);
+    wrap.appendChild(dot);
+  }
 }
 
 function drawSingleSelectionChrome({ id, el, box }) {
