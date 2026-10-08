@@ -3,7 +3,7 @@
 // Event listeners are delegated on #canvas, so losing per-element refs is fine.
 
 import { getDoc, getSelection, findNode } from "./state.js";
-import { routeStraight, routeOrthogonal } from "./connectors.js";
+import { routeStraight, routeOrthogonal, portNormal, dirOf } from "./connectors.js";
 import { anchorsToPath, anchorsBBox, shapeToAnchors } from "./paths.js";
 import { collectGradients, linearGradientElement, paintRef, PAINT_SLOTS } from "./paint.js";
 
@@ -11,7 +11,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const HANDLE_SIZE = 8;      // px in screen space (via non-scaling stroke + fixed size)
 const ROT_STEM_LEN = 24;    // px in screen space
 
-let docLayer, chromeHover, chromeSelection, chromeTransient, canvasSvg;
+let docLayer, chromeHover, chromeSelection, chromeTransient, chromePorts, canvasSvg;
 
 // Whether the Direct Selection tool (Illustrator's white arrow) is active. Gates
 // the path-anchor chrome: a lone pen path shows editable anchors/handles only
@@ -40,9 +40,13 @@ export function mount(svg) {
   chromeSelection.setAttribute("id", "chrome-selection");
   chromeTransient = document.createElementNS(SVG_NS, "g");
   chromeTransient.setAttribute("id", "chrome-transient");
+  // Connector-tool connection points sit on top of everything.
+  chromePorts = document.createElementNS(SVG_NS, "g");
+  chromePorts.setAttribute("id", "chrome-ports");
   chrome.appendChild(chromeHover);
   chrome.appendChild(chromeSelection);
   chrome.appendChild(chromeTransient);
+  chrome.appendChild(chromePorts);
 }
 
 export function getTransientLayer() { return chromeTransient; }
@@ -221,7 +225,8 @@ export function resolveConnector(node) {
       const el = docLayer.querySelector(`[data-id="${cssEscape(e.ref)}"]`);
       if (!el) return { box: null, pt: null, missing: true };
       const bb = elementBBoxInCanvas(el);
-      return bb ? { box: bb, pt: null } : { box: null, pt: null, missing: true };
+      if (!bb) return { box: null, pt: null, missing: true };
+      return { box: bb, pt: null, port: e.port ? portToCanvas(el, e.port) : null };
     }
     return { box: null, pt: e ? { x: e.x, y: e.y } : null };
   };
@@ -229,9 +234,51 @@ export function resolveConnector(node) {
   const b = end(node.to);
   if (a.missing || b.missing) return { valid: false };
   if (node.route === "orthogonal") {
-    return routeOrthogonal(a.box, b.box, a.pt, b.pt, node.waypoints);
+    return routeOrthogonal(a.box, b.box, a.pt, b.pt, node.waypoints, a.port, b.port);
   }
-  return routeStraight(a.box, b.box, a.pt, b.pt);
+  return routeStraight(a.box, b.box, a.pt, b.pt, a.port, b.port);
+}
+
+// The element whose geometry defines a shape's connection points: the shape
+// itself, not a label wrapper (whose bbox would include the label text).
+function portElement(el) {
+  return el.getAttribute("data-wrapper") === "label" && el.firstElementChild ? el.firstElementChild : el;
+}
+
+// Canvas-space {x, y, dir} of a port ({x, y} fractions of the shape's local
+// bbox). dir is the canvas compass direction the port faces, so it follows rotation.
+export function portToCanvas(el, port) {
+  const shape = portElement(el);
+  const b = safeBBox(shape);
+  const M = localToCanvasMatrix(shape);
+  if (!M) return null;
+  const pt = canvasSvg.createSVGPoint();
+  pt.x = b.x + port.x * b.width;
+  pt.y = b.y + port.y * b.height;
+  const q = pt.matrixTransform(M);
+  const n = portNormal(port);
+  const dir = dirOf({ x: M.a * n.x + M.c * n.y, y: M.b * n.x + M.d * n.y });
+  return { x: q.x, y: q.y, dir };
+}
+
+// --- Connection-point hints (managed by tools.js while the Connector tool is active) ---
+// `points` are canvas-space {x, y}; `active` is the index of the snapped point, or -1.
+export function setPortHints(points, active = -1) {
+  clearPortHints();
+  const r = 4 * canvasPixelScale();
+  points.forEach((p, i) => {
+    const c = document.createElementNS(SVG_NS, "circle");
+    c.setAttribute("class", i === active ? "port-hint active" : "port-hint");
+    c.setAttribute("cx", p.x);
+    c.setAttribute("cy", p.y);
+    c.setAttribute("r", i === active ? r * 1.5 : r);
+    chromePorts.appendChild(c);
+  });
+}
+
+export function clearPortHints() {
+  if (!chromePorts) return;
+  while (chromePorts.firstChild) chromePorts.removeChild(chromePorts.firstChild);
 }
 
 function nodeToElement(node) {
