@@ -6,6 +6,7 @@ import * as tools from "./tools.js";
 import * as ui from "./ui.js";
 import * as exp from "./export.js";
 import * as importer from "./import.js";
+import * as image from "./image.js";
 import * as layers from "./layers.js";
 import * as viewport from "./viewport.js";
 import * as grid from "./grid.js";
@@ -25,6 +26,7 @@ exp.mountPanel(
   document.getElementById("tight-mode"),
 );
 importer.mountImport(document);
+image.mountImage(document, svg);
 layers.mount(document);
 persist.mount(document);
 

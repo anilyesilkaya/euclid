@@ -706,6 +706,53 @@ html, body {
 }
 .modal-btns button.primary:hover { background: var(--accent-2); }
 
+/* Place-image modal */
+.image-source-row {
+  display: flex;
+  gap: 8px;
+}
+.image-source-row input {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 10px;
+  font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  outline: none;
+}
+.image-source-row input:focus { border-color: var(--accent); }
+.image-source-row button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.image-source-row button:hover { background: #33363c; }
+.image-preview {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  padding: 10px;
+  background: repeating-conic-gradient(#2a2d33 0% 25%, #23262b 0% 50%) 0 0 / 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.image-preview[hidden] { display: none; }
+.image-preview img {
+  max-width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+}
+.image-preview-meta {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 /* Layers panel */
 #layers-section {
   display: grid;

@@ -1364,6 +1364,18 @@ function updateResize(p, _e) {
   mutate((root) => {
     const n = findNode(root, id);
     if (!n) return;
+    // Placed images keep their aspect ratio on corner drags by default; Shift
+    // frees it (the inverse of shapes, matching Illustrator's placed images).
+    if (n.type === "image") {
+      const a = orig.attrs;
+      const box = { x: a.x, y: a.y, width: a.width, height: a.height };
+      const { sx, sy, ax, ay } = computeScale(box, dir, dx, dy, !_e?.shiftKey);
+      n.attrs.x = ax + (a.x - ax) * sx;
+      n.attrs.y = ay + (a.y - ay) * sy;
+      n.attrs.width = a.width * sx;
+      n.attrs.height = a.height * sy;
+      return;
+    }
     resizeNode(n, orig, dir, dx, dy);
   });
 }
@@ -1383,7 +1395,7 @@ function resizeNode(n, orig, dir, dx, dy) {
     if (nh < 0) { ny += nh; nh = -nh; }
     return { x: nx, y: ny, w: nw, h: nh };
   };
-  if (n.type === "rect") {
+  if (n.type === "rect" || n.type === "image") {
     const r = applyBox(orig.attrs.x, orig.attrs.y, orig.attrs.width, orig.attrs.height);
     n.attrs.x = r.x; n.attrs.y = r.y; n.attrs.width = r.w; n.attrs.height = r.h;
   } else if (n.type === "ellipse") {
@@ -1489,7 +1501,7 @@ function scaleSubtree(node, ax, ay, sx, sy) {
 function scaleGeom(node, sx, sy) {
   const a = node.attrs;
   const avg = (Math.abs(sx) + Math.abs(sy)) / 2;
-  if (node.type === "rect") {
+  if (node.type === "rect" || node.type === "image") {
     a.x *= sx; a.y *= sy; a.width *= sx; a.height *= sy;
   } else if (node.type === "ellipse") {
     a.cx *= sx; a.cy *= sy; a.rx *= sx; a.ry *= sy;

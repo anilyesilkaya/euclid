@@ -295,7 +295,7 @@ function labelElement(ownerNode, bbox) {
 // Local bbox of a shape node computed from its own attrs (no DOM).
 function localBBoxOfShapeNode(node) {
   const a = node.attrs;
-  if (node.type === "rect") return { x: a.x, y: a.y, width: a.width, height: a.height };
+  if (node.type === "rect" || node.type === "image") return { x: a.x, y: a.y, width: a.width, height: a.height };
   if (node.type === "circle") return { x: a.cx - a.r, y: a.cy - a.r, width: a.r * 2, height: a.r * 2 };
   if (node.type === "ellipse") return { x: a.cx - a.rx, y: a.cy - a.ry, width: a.rx * 2, height: a.ry * 2 };
   if (node.type === "line") {

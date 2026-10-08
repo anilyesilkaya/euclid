@@ -258,6 +258,7 @@
             <button id="open-btn" type="button" title="Open a .euclid.json document (Ctrl+O)">Open</button>
             <button id="save-btn" type="button" title="Save your document as .euclid.json — round-trips everything (Ctrl+S)">Save</button>
             <button id="import-btn" type="button" title="Import SVG markup">Import</button>
+            <button id="image-btn" type="button" title="Place an image from a URL or your computer">Import Image</button>
             <button id="copy-btn" type="button" title="Copy SVG source to clipboard">Copy</button>
             <button id="download-btn" type="button" title="Export a portable .svg file">Export SVG</button>
           </div>
@@ -285,6 +286,30 @@
       </div>
     </div>
   </div>
+
+  <div id="image-modal" class="modal" hidden aria-modal="true" role="dialog" aria-labelledby="image-title">
+    <div class="modal-card">
+      <h3 id="image-title">Place image</h3>
+      <p class="modal-hint">Paste an image URL, or browse for a file on your computer (PNG, JPEG, GIF, WebP, SVG). You can also drop an image file straight onto the canvas. Local files are embedded in the document.</p>
+      <div class="image-source-row">
+        <input id="image-url" type="url" spellcheck="false" autocomplete="off" placeholder="https://example.com/picture.png">
+        <button id="image-browse" type="button">Browse…</button>
+      </div>
+      <div class="modal-row">
+        <label class="chk" title="Inline the image data so Save/Export don't depend on the URL. Falls back to a link if the server blocks it."><input type="checkbox" id="image-embed" checked> Embed image data from URL</label>
+      </div>
+      <div id="image-preview" class="image-preview" hidden>
+        <img id="image-preview-img" alt="Image preview">
+        <div id="image-preview-meta" class="image-preview-meta"></div>
+      </div>
+      <div id="image-error" class="modal-error" hidden></div>
+      <div class="modal-btns">
+        <button id="image-cancel" type="button">Cancel</button>
+        <button id="image-confirm" type="button" class="primary">Place</button>
+      </div>
+    </div>
+  </div>
+  <input type="file" id="image-file" accept="image/*" hidden>
 
   <script src="js/euclid.bundle.js"></script>
 </body>
