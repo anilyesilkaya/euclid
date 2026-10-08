@@ -116,6 +116,10 @@ html, body {
   touch-action: none; /* we handle wheel/pan ourselves */
 }
 #canvas.draw-mode { cursor: crosshair; }
+/* Connector tool: selection handles overlap connection points, so they neither
+   take the cursor nor the click; on a connection point the cursor is a hand. */
+#canvas.connector-mode #chrome-selection { pointer-events: none; }
+#canvas.connector-mode.over-port { cursor: pointer; }
 #canvas.space-pan { cursor: grab; }
 #canvas.panning { cursor: grabbing; }
 /* Select tool: show a move cursor when hovering a shape, and a copy cursor when
@@ -302,6 +306,15 @@ html, body {
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
+/* Connector-tool connection points; the snapped one is filled. */
+#chrome-layer .port-hint {
+  fill: #ffffff;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+#chrome-layer .port-hint.active { fill: var(--accent); }
 #chrome-layer .marquee {
   fill: var(--marquee);
   stroke: var(--marquee-stroke);

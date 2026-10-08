@@ -1,24 +1,21 @@
 // End-to-end tests for image import (js/image.js), driven through the real UI
-// in headless Chromium over CDP (see cdp.mjs).
+// in headless Chromium (see e2e.mjs).
 //
 // Usage:
 //   npm run build && node tools/test-image.mjs [--shots <dir>]
 //
-// Spins up two local HTTP servers on different origins — one serving the app,
-// one serving fixture images with and without CORS headers — so the
-// embed-vs-link fallback is exercised for real. --shots writes a screenshot
-// after each test for visual review.
-import { createServer } from 'node:http';
-import { readFile, writeFile, mkdtemp, mkdir } from 'node:fs/promises';
+// Besides the app server, a second local server on a different origin serves
+// fixture images with and without CORS headers, so the embed-vs-link fallback
+// is exercised for real.
+import { writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, extname, resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { deflateSync, crc32 } from 'node:zlib';
-import { launch, sleep } from './cdp.mjs';
-
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const shotsIdx = process.argv.indexOf('--shots');
-const SHOTS_DIR = shotsIdx > 0 ? process.argv[shotsIdx + 1] : null;
+import {
+  start, run, test, listen, evaluate, waitFor, freshPage, press, click, center, toClient,
+  drag, offset, insertText, chooseFile, dropFiles, lastDownload, savedDoc, exportedSvg,
+  nodesOfType, dialogs, sleep, MOD, ok, eq, near,
+} from './e2e.mjs';
 
 // --- Fixtures ---
 
@@ -51,29 +48,9 @@ const FIX = {
     '<rect width="120" height="80" fill="#ff00ff"/></svg>'),
 };
 
+await start();
+
 // --- Servers ---
-
-const MIME = {
-  '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
-  '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json',
-};
-
-function listen(handler) {
-  return new Promise((res) => {
-    const srv = createServer(handler);
-    srv.listen(0, '127.0.0.1', () => res({ srv, origin: `http://127.0.0.1:${srv.address().port}` }));
-  });
-}
-
-const app = await listen(async (req, res) => {
-  const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  const file = resolve(ROOT, '.' + (path === '/' ? '/index.html' : path));
-  if (!file.startsWith(ROOT)) { res.writeHead(403).end(); return; }
-  try {
-    const body = await readFile(file);
-    res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream' }).end(body);
-  } catch { res.writeHead(404).end(); }
-});
 
 // A different origin, so the app's fetch() is subject to CORS.
 const assets = await listen((req, res) => {
@@ -98,133 +75,12 @@ await writeFile(files.big, FIX.big);
 await writeFile(files.svg, FIX.svg);
 await writeFile(files.red, FIX.cors);
 await writeFile(files.text, 'not an image');
-if (SHOTS_DIR) await mkdir(SHOTS_DIR, { recursive: true });
 
-// --- Browser ---
-
-// Installed before the app loads on every navigation: capture downloads
-// (Save / Export SVG) and clipboard writes (Copy) instead of letting them leave
-// the page.
-const INIT = `
-  window.__downloads = [];
-  window.__clipboard = [];
-  const __blobs = new Map();
-  const __create = URL.createObjectURL;
-  URL.createObjectURL = function (b) { const u = __create.call(URL, b); __blobs.set(u, b); return u; };
-  const __click = HTMLAnchorElement.prototype.click;
-  HTMLAnchorElement.prototype.click = function () {
-    if (this.download && __blobs.has(this.href)) {
-      window.__downloads.push({ name: this.download, blob: __blobs.get(this.href) });
-      return;
-    }
-    return __click.call(this);
-  };
-  if (navigator.clipboard) navigator.clipboard.writeText = async (t) => { window.__clipboard.push(t); };
-`;
-
-const { cdp, close } = await launch({ width: 1400, height: 900 });
-await cdp.send('Page.enable');
-await cdp.send('Runtime.enable');
-await cdp.send('DOM.enable');
-await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: INIT });
-await cdp.send('Page.setInterceptFileChooserDialog', { enabled: true });
-
-const dialogs = [];
-cdp.on('Page.javascriptDialogOpening', (p) => {
-  dialogs.push(p.message);
-  cdp.send('Page.handleJavaScriptDialog', { accept: true });
-});
-const pageErrors = [];
-cdp.on('Runtime.exceptionThrown', (p) => pageErrors.push(p.exceptionDetails?.exception?.description || p.exceptionDetails?.text));
-
-// --- Page helpers ---
-
-// userGesture lets a scripted click open a file chooser, like a real click.
-async function evaluate(expr, { userGesture = false } = {}) {
-  const r = await cdp.send('Runtime.evaluate', {
-    expression: `(async () => { ${expr} })()`, awaitPromise: true, returnByValue: true, userGesture,
-  });
-  if (r.exceptionDetails) {
-    throw new Error('page eval failed: ' + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
-  }
-  return r.result.value;
-}
-
-async function waitFor(expr, what, timeout = 4000) {
-  const end = Date.now() + timeout;
-  for (;;) {
-    const v = await evaluate(`return (${expr});`);
-    if (v) return v;
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
-    await sleep(50);
-  }
-}
-
-async function freshPage() {
-  await evaluate('try { localStorage.clear(); } catch {}');
-  const loaded = cdp.once('Page.loadEventFired');
-  await cdp.send('Page.navigate', { url: app.origin + '/' });
-  await loaded;
-  await waitFor('document.querySelector("#image-btn")', 'app to mount');
-  dialogs.length = 0;
-  pageErrors.length = 0;
-}
-
-const KEYS = {
-  Enter: { code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' },
-  a: { code: 'KeyA', windowsVirtualKeyCode: 65 },
-  g: { code: 'KeyG', windowsVirtualKeyCode: 71 },
-};
-const MOD = { ctrl: 2, shift: 8 };
-
-async function press(key, modifiers = 0) {
-  const k = KEYS[key];
-  const text = modifiers ? undefined : k.text;
-  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key, modifiers, ...k, text });
-  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key, modifiers, ...k, text: undefined });
-}
-
-async function click(selector) {
-  await evaluate(`document.querySelector(${JSON.stringify(selector)}).click();`, { userGesture: true });
-}
-
-async function center(selector) {
-  return evaluate(`
-    const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };`);
-}
-
-// Canvas (viewBox) point -> client pixels.
-async function toClient(x, y) {
-  return evaluate(`
-    const svg = document.getElementById('canvas');
-    const p = new DOMPoint(${x}, ${y}).matrixTransform(svg.getScreenCTM());
-    return { x: p.x, y: p.y };`);
-}
-
-// Real mouse drag (CDP mouse events become pointer events in the page).
-async function drag(from, to, modifiers = 0, steps = 8) {
-  const m = (type, p, extra = {}) => cdp.send('Input.dispatchMouseEvent',
-    { type, x: p.x, y: p.y, modifiers, button: 'left', ...extra });
-  await m('mouseMoved', from, { button: 'none' });
-  await m('mousePressed', from, { buttons: 1, clickCount: 1 });
-  for (let i = 1; i <= steps; i++) {
-    const t = i / steps;
-    await m('mouseMoved', { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t }, { buttons: 1 });
-  }
-  await m('mouseReleased', to, { buttons: 0, clickCount: 1 });
-  await sleep(50);
-}
-
-// A drag delta in canvas units -> client pixels, applied to a client point.
-async function offset(from, dx, dy) {
-  const a = await toClient(0, 0), b = await toClient(dx, dy);
-  return { x: from.x + (b.x - a.x), y: from.y + (b.y - a.y) };
-}
+// --- Image helpers ---
 
 async function typeUrl(url) {
   await evaluate('const i = document.getElementById("image-url"); i.focus(); i.select();');
-  await cdp.send('Input.insertText', { text: url });
+  await insertText(url);
 }
 
 async function openModal() {
@@ -236,49 +92,7 @@ const modalOpen = () => evaluate('return !document.getElementById("image-modal")
 const previewMeta = () => evaluate('return document.getElementById("image-preview-meta").textContent;');
 const errorText = () => evaluate('const e = document.getElementById("image-error"); return e.hidden ? "" : e.textContent;');
 
-// Pick a file through the real Browse… / Open buttons: the click opens a file
-// chooser, which CDP intercepts and fills.
-async function chooseFile(buttonSelector, path) {
-  const chooser = cdp.once('Page.fileChooserOpened');
-  await click(buttonSelector);
-  const { backendNodeId } = await Promise.race([chooser,
-    sleep(4000).then(() => { throw new Fail(`no file chooser opened from ${buttonSelector}`); })]);
-  await cdp.send('DOM.setFileInputFiles', { files: [path], backendNodeId });
-}
-
-// Native drag-and-drop of files from the OS onto a client point.
-async function dropFiles(paths, at) {
-  const data = { items: [], files: paths, dragOperationsMask: 1 };
-  for (const type of ['dragEnter', 'dragOver', 'drop']) {
-    await cdp.send('Input.dispatchDragEvent', { type, x: at.x, y: at.y, data });
-  }
-  await sleep(50);
-}
-
-// Text of the most recent capture download with this file name.
-async function lastDownload(name) {
-  return evaluate(`
-    const d = window.__downloads.filter((d) => d.name === ${JSON.stringify(name)}).pop();
-    return d ? await d.blob.text() : null;`);
-}
-
-// The document model, read through the real Save button.
-async function savedDoc() {
-  await click('#save-btn');
-  return JSON.parse(await lastDownload('drawing.euclid.json'));
-}
-
-async function exportedSvg() {
-  await click('#download-btn');
-  return lastDownload('canvas.svg');
-}
-
-function images(doc) {
-  const out = [];
-  const walk = (n) => { if (n.type === 'image') out.push(n); (n.children || []).forEach(walk); };
-  walk(doc.doc);
-  return out;
-}
+function images(doc) { return nodesOfType(doc, 'image'); }
 
 async function onlyImage() {
   const imgs = images(await savedDoc());
@@ -286,17 +100,7 @@ async function onlyImage() {
   return imgs[0];
 }
 
-// --- Assertions ---
-
-class Fail extends Error {}
-function ok(cond, msg) { if (!cond) throw new Fail(msg); }
-function eq(a, b, msg) { if (a !== b) throw new Fail(`${msg}: expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`); }
-function near(a, b, msg, tol = 0.5) { if (!(Math.abs(a - b) <= tol)) throw new Fail(`${msg}: expected ≈${b}, got ${a}`); }
-
 // --- Tests ---
-
-const tests = [];
-const test = (name, fn) => tests.push({ name, fn });
 
 test('URL with CORS is embedded as data: and centered on the canvas', async () => {
   await openModal();
@@ -558,27 +362,7 @@ test('Save → Open round-trips the image; exported SVG renders standalone', asy
 
 // --- Run ---
 
-let failed = 0;
-try {
-  for (const [i, t] of tests.entries()) {
-    await freshPage();
-    try {
-      await t.fn();
-      if (pageErrors.length) throw new Fail('page error: ' + pageErrors[0]);
-      console.log(`  ✓ ${t.name}`);
-    } catch (err) {
-      failed++;
-      console.log(`  ✗ ${t.name}\n      ${err instanceof Fail ? err.message : err.stack}`);
-    }
-    if (SHOTS_DIR) {
-      const { data } = await cdp.send('Page.captureScreenshot', { format: 'png' });
-      await writeFile(join(SHOTS_DIR, `${String(i + 1).padStart(2, '0')}.png`), Buffer.from(data, 'base64'));
-    }
-  }
-} finally {
-  close();
-  app.srv.close();
+await run(async () => {
   assets.srv.close();
-}
-console.log(`\n${tests.length - failed}/${tests.length} passed`);
-process.exitCode = failed ? 1 : 0;
+  await rm(tmp, { recursive: true, force: true });
+});

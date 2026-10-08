@@ -6,15 +6,17 @@ import {
   mutate, newId, emptyTransform, findNode, findPath, topAncestor, walk,
 } from "./state.js";
 import * as history from "./history.js";
-import { toCanvasPoint, toLocalPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix, setHoverOutline, clearHoverOutline, resolveConnector, connectorMidpoint, canvasPixelScale, setDirectSelectMode } from "./render.js";
+import { toCanvasPoint, toLocalPoint, getTransientLayer, getDocLayer, elementBBoxInCanvas, localToCanvasMatrix, setHoverOutline, clearHoverOutline, resolveConnector, connectorMidpoint, canvasPixelScale, setDirectSelectMode, portToCanvas, setPortHints, clearPortHints } from "./render.js";
 import * as guides from "./guides.js";
 import * as grid from "./grid.js";
-import { routeStraight } from "./connectors.js";
+import { routeOrthogonal, portsFor } from "./connectors.js";
 import { anchorsToPath, shapeToAnchors, GEOMETRY_ATTRS } from "./paths.js";
 
 const CANVAS_BBOX = { x: 0, y: 0, width: 1000, height: 700 };
 const SNAP_THRESHOLD = 6; // canvas units — feels right at default zoom
 const DRAG_THRESHOLD = 3; // screen px the pointer must travel before a move "takes"
+const PORT_SNAP_PX = 12;  // a connector end snaps to a connection point within this many screen px
+const PORT_REACH_PX = 24; // a shape shows its connection points once the pointer is this close
 const ROUND_RECT_RADIUS = 16; // default corner radius for the rounded-rect tool
 
 let hoveredId = null;     // top-level id currently under the pointer (select tool)
@@ -66,7 +68,7 @@ export function mount(svg) {
   svg.addEventListener("pointerdown", onPointerDown);
   svg.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
-  svg.addEventListener("pointerleave", () => { if (!gesture) setHover(null); });
+  svg.addEventListener("pointerleave", () => { if (!gesture) { setHover(null); hideConnectHints(); } });
   svg.addEventListener("dblclick", onDoubleClick);
   svg.addEventListener("contextmenu", onContextMenu);
 }
@@ -75,10 +77,14 @@ export function setTool(name) {
   if (currentTool === name) return;
   cancelPolyline();
   cancelPen();
+  cancelConnector();
   currentTool = name;
   // Both selection tools (Select, Direct Selection) are pointer/arrow tools — the
   // crosshair "draw-mode" cursor is only for shape-creating tools.
   canvasSvg.classList.toggle("draw-mode", !isSelectTool(name));
+  // The Connector tool works on shapes, not on the selection: its connection
+  // points sit right on the resize handles, so the handles stand aside (CSS).
+  canvasSvg.classList.toggle("connector-mode", name === "connector");
   // Direct Selection swaps a lone path's chrome to editable anchors/handles.
   setDirectSelectMode(name === "directselect");
   setHover(null); // hover highlight is a select-tool affordance
@@ -98,6 +104,16 @@ function onPointerDown(e) {
   if (e.button !== 0) return;
   const p = toCanvasPoint(e);
   const target = e.target;
+
+  // Second click of a click-click connector: this click picks the target.
+  if (gesture && gesture.type === "connector" && gesture.armed) {
+    const g = gesture;
+    gesture = null;
+    g.last = p;
+    finishConnector(g, e);
+    clearTransient();
+    return;
+  }
 
   // A gesture is starting: drop the hover highlight and remember the screen-space
   // origin so the move gesture can apply a zoom-independent drag threshold.
@@ -134,6 +150,7 @@ function onPointerMove(e) {
 
   if (!gesture) {
     updateHover(e);
+    if (currentTool === "connector") showConnectHints(connectEndAt(p, e.target, null));
     return;
   }
 
@@ -217,6 +234,15 @@ function onPointerUp(e) {
   } else if (g.type === "marquee") {
     finishMarquee(g, e.shiftKey);
   } else if (g.type === "connector") {
+    // A click (no drag) that started on a shape arms the connector: the preview
+    // keeps following the pointer and the next click on the canvas picks the
+    // target. An armed connector only completes on that click (see
+    // onPointerDown), never on a stray pointerup elsewhere on the page.
+    if (g.armed || (!g.moved && g.from.ref)) {
+      g.armed = true;
+      gesture = g;
+      return;
+    }
     finishConnector(g, e);
   } else if (g.type === "move") {
     // Commit only a real move that touched at least one movable node (a
@@ -679,23 +705,26 @@ function isEmptyShape(node, tool) {
 
 // --- Connector (drag between shapes) ---
 //
-// Endpoints attach to whatever top-level shape sits under the pointer; drop over
-// empty canvas to pin a free point. Geometry is never stored — the connector node
-// holds only endpoint refs (or free points) + style, and render/export re-route it
-// from the live shape boxes, so it follows the shapes on move/resize/rotate.
+// Drag from a shape to another, or click a shape, move, and click the target.
+// Endpoints attach to the top-level shape under (or near) the pointer: snapped to
+// one of its connection points when the pointer is close to one (draw.io "fixed"
+// ends), else floating on its border; over empty canvas they pin a free point.
+// While the tool is active, the nearby shape's connection points are shown and
+// the snap target is highlighted. Geometry is never stored — the connector node
+// holds only endpoint refs (+ port) or free points, and render/export re-route it
+// from the live shapes, so it follows them on move/resize/rotate.
 
 function startConnector(e, p, target) {
-  const hit = hitTest(target);
-  const fromId = hit ? pickSelectionId(hit.id) : null;
+  const at = connectEndAt(p, target, null);
   gesture = {
     type: "connector",
     origin: p, last: p, moved: false,
-    from: fromId ? { ref: fromId } : { x: p.x, y: p.y },
-    fromAnchor: fromId ? anchorOfShape(fromId) : { x: p.x, y: p.y },
-    toId: null,
+    from: at.end || { x: p.x, y: p.y },
+    to: null,
   };
-  // Preview line on the transient layer.
-  const line = document.createElementNS(SVG_NS, "line");
+  showConnectHints(at);
+  // Preview of the elbow route on the transient layer.
+  const line = document.createElementNS(SVG_NS, "polyline");
   line.setAttribute("class", "connector-preview");
   gesture.previewEl = line;
   getTransientLayer().appendChild(line);
@@ -703,46 +732,45 @@ function startConnector(e, p, target) {
 }
 
 function updateConnector(p, e) {
-  const hit = hitTest(e.target);
-  let toId = hit ? pickSelectionId(hit.id) : null;
-  // Don't allow attaching both ends to the same shape (a self-loop we can't route).
-  if (toId && gesture.from.ref === toId) toId = null;
-  gesture.toId = toId;
-  highlightConnectTarget(toId);
+  // Excluding the start shape rules out a self-loop we can't route.
+  const at = connectEndAt(p, e.target, gesture.from.ref ?? null);
+  gesture.to = at.end;
+  highlightConnectTarget(at.end ? at.end.ref : null);
+  showConnectHints(at);
   updateConnectorPreview(p);
 }
 
 function updateConnectorPreview(p) {
-  const fromBox = gesture.from.ref ? shapeBox(gesture.from.ref) : null;
-  const toBox = gesture.toId ? shapeBox(gesture.toId) : null;
-  const fromPt = gesture.from.ref ? null : { x: gesture.from.x, y: gesture.from.y };
-  const toPt = { x: p.x, y: p.y };
-  const g = routeStraight(fromBox, toBox, fromPt, toPt);
+  const a = endGeometry(gesture.from);
+  const b = gesture.to ? endGeometry(gesture.to) : { box: null, pt: p, port: null };
+  const g = routeOrthogonal(a.box, b.box, a.pt, b.pt, null, a.port, b.port);
   if (!g.valid) return;
-  const line = gesture.previewEl;
-  line.setAttribute("x1", g.x1); line.setAttribute("y1", g.y1);
-  line.setAttribute("x2", g.x2); line.setAttribute("y2", g.y2);
+  gesture.previewEl.setAttribute("points", g.points.map((pt) => pt.join(",")).join(" "));
 }
 
 function finishConnector(g, e) {
   clearConnectTargetHighlight();
-  const hit = hitTest(e.target);
-  let toId = hit ? pickSelectionId(hit.id) : null;
-  if (toId && g.from.ref === toId) toId = null;
+  hideConnectHints();
+  const toEnd = connectEndAt(g.last, e.target, g.from.ref ?? null).end;
+  // The second click of a click-click connector must land on a target; a
+  // click on empty canvas cancels rather than leaving a dangling edge.
+  if (g.armed && !toEnd) return;
 
   // A connector needs at least one attached endpoint AND a non-trivial length —
   // otherwise a stray click on empty canvas would create a zero-length edge.
   const dist = Math.hypot(g.last.x - g.origin.x, g.last.y - g.origin.y);
-  const hasAttachment = !!g.from.ref || !!toId;
-  if (!hasAttachment || (dist < 4 && !toId)) return;
+  const hasAttachment = !!g.from.ref || !!toEnd;
+  if (!hasAttachment || (dist < 4 && !toEnd)) return;
 
-  const to = toId ? { ref: toId } : { x: round2(g.last.x), y: round2(g.last.y) };
-  const from = g.from.ref ? { ref: g.from.ref } : { x: round2(g.from.x), y: round2(g.from.y) };
+  const to = toEnd || { x: round2(g.last.x), y: round2(g.last.y) };
+  const from = g.from.ref ? g.from : { x: round2(g.from.x), y: round2(g.from.y) };
 
   const id = newId("c");
   const node = {
     id, type: "connector",
     from, to,
+    // New connectors bend at right angles; Routing → Straight in the panel undoes it.
+    route: "orthogonal",
     arrowEnd: true,
     attrs: { ...CONNECTOR_STYLE },
   };
@@ -752,17 +780,90 @@ function finishConnector(g, e) {
   setSelection([id]);
 }
 
+// Drop an in-progress connector (an armed click-click one, or a drag).
+function cancelConnector() {
+  hideConnectHints();
+  if (!gesture || gesture.type !== "connector") return;
+  gesture = null;
+  clearConnectTargetHighlight();
+  clearTransient();
+}
+
+// What a connector end at canvas point `p` would attach to. Returns
+// { end, points, active }: `end` is { ref, port? } or null (a free point);
+// `points` are the candidate shape's connection points in canvas space, and
+// `active` indexes the one snapped to (-1 if none).
+function connectEndAt(p, target, excludeId) {
+  const scale = canvasPixelScale();
+  const hit = hitTest(target);
+  let overId = hit ? pickSelectionId(hit.id) : null;
+  if (overId && (overId === excludeId || !isConnectable(overId))) overId = null;
+  const shapeId = overId || nearestConnectable(p, PORT_REACH_PX * scale, excludeId);
+  if (!shapeId) return { end: null, points: [], active: -1 };
+
+  const el = getDocLayer().querySelector(`[data-id="${cssEscape(shapeId)}"]`);
+  const ports = el ? portsFor(findNode(getDoc(), shapeId).type) : [];
+  const points = ports.map((port) => portToCanvas(el, port));
+  let active = -1, bestD = PORT_SNAP_PX * scale;
+  points.forEach((q, i) => {
+    if (!q) return;
+    const d = Math.hypot(q.x - p.x, q.y - p.y);
+    if (d <= bestD) { bestD = d; active = i; }
+  });
+  if (active >= 0) return { end: { ref: shapeId, port: { ...ports[active] } }, points: points.filter(Boolean), active };
+  return { end: overId ? { ref: shapeId } : null, points: points.filter(Boolean), active };
+}
+
+function isConnectable(id) {
+  const n = findNode(getDoc(), id);
+  return !!n && n.type !== "connector";
+}
+
+// Nearest top-level shape whose canvas box lies within `reach` of `p`.
+function nearestConnectable(p, reach, excludeId) {
+  let best = null, bestD = reach;
+  for (const n of getDoc().children) {
+    if (n.type === "connector" || n.id === excludeId) continue;
+    const b = shapeBox(n.id);
+    if (!b) continue;
+    const dx = Math.max(b.x - p.x, 0, p.x - (b.x + b.width));
+    const dy = Math.max(b.y - p.y, 0, p.y - (b.y + b.height));
+    const d = Math.hypot(dx, dy);
+    if (d <= bestD) { bestD = d; best = n.id; }
+  }
+  return best;
+}
+
+// Show a candidate shape's connection points; the pointer becomes a hand
+// while it's on one (the click would snap there).
+function showConnectHints(at) {
+  if (!at.points.length) { hideConnectHints(); return; }
+  setPortHints(at.points, at.active);
+  canvasSvg.classList.toggle("over-port", at.active >= 0);
+}
+
+function hideConnectHints() {
+  clearPortHints();
+  canvasSvg.classList.remove("over-port");
+}
+
+// Canvas geometry of a connector end, in the form the router takes.
+function endGeometry(end) {
+  if (end.ref == null) return { box: null, pt: { x: end.x, y: end.y }, port: null };
+  const el = getDocLayer().querySelector(`[data-id="${cssEscape(end.ref)}"]`);
+  return {
+    box: shapeBox(end.ref),
+    pt: null,
+    port: el && end.port ? portToCanvas(el, end.port) : null,
+  };
+}
+
 // Canvas-space AABB of a top-level shape by id (null if unmeasurable).
 function shapeBox(id) {
   const el = getDocLayer().querySelector(`[data-id="${cssEscape(id)}"]`);
   if (!el) return null;
   const b = elementBBoxInCanvas(el);
   return b ? { x: b.x1, y: b.y1, width: b.x2 - b.x1, height: b.y2 - b.y1 } : null;
-}
-
-function anchorOfShape(id) {
-  const b = shapeBox(id);
-  return b ? { x: b.x + b.width / 2, y: b.y + b.height / 2 } : { x: 0, y: 0 };
 }
 
 // Outline the shape the "to" end would attach to, as drag feedback.

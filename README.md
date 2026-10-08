@@ -82,12 +82,14 @@ Connectors are first-class objects rather than static lines.
 
 They can:
 
-- Attach to shapes
+- Attach to shapes — snapped to a connection point, or floating on the border
 - Re-route when shapes move or resize
-- Use straight or orthogonal routing
+- Bend at right angles (orthogonal routing, the default for new connectors), or run straight
 - Carry arrowheads
 - Carry labels
 - Use editable orthogonal waypoints
+
+With the Connector tool, hovering a shape (or coming close to it) shows its connection points: three per side on rectangles and images, eight on the curve of an ellipse, and the side midpoints on anything else. Dragging near a point highlights it and snaps the connector end to it; the attachment rides along when the shape moves, resizes, or rotates. Connectors leave a point straight out of its side and bend around the shapes rather than through them; switch a connector to **Routing → Straight** in the properties panel for a direct line. You can also click a point on the source shape, move the mouse, and click a point on the target shape; clicking empty canvas or pressing `Esc` cancels. Release inside a shape away from its points to attach floating (the end slides along the border to face the other end), or on empty canvas for a free end.
 
 This makes Euclid suitable for architecture diagrams, signal-processing chains, flow diagrams, block diagrams, and technical documentation.
 
@@ -371,7 +373,7 @@ npm run build
 npm test
 ```
 
-Pass `--shots <dir>` (`npm test -- --shots out/`) to save a screenshot after each test.
+`npm test` runs every suite. To save a screenshot after each test, run a single suite with `--shots <dir>`, for example `node tools/test-connector.mjs --shots out/`.
 
 ---
 
@@ -498,8 +500,10 @@ js/
 
 tools/
   cdp.mjs               Headless Chromium / DevTools Protocol client
+  e2e.mjs               Shared end-to-end test harness
   shot.mjs              Browser screenshot helper
   test-image.mjs        End-to-end tests for image import
+  test-connector.mjs    End-to-end tests for connector connection points
 ```
 
 `js/euclid.bundle.js` is a generated build artifact loaded by `index.html`.

@@ -134,12 +134,66 @@
   function centerOf(box) {
     return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   }
-  function routeStraight(fromBox, toBox, fromPt, toPt) {
-    const fromCenter = fromBox ? centerOf(fromBox) : fromPt;
-    const toCenter = toBox ? centerOf(toBox) : toPt;
-    if (!fromCenter || !toCenter) return { valid: false };
-    const from = fromBox ? borderPoint(fromBox, toCenter.x, toCenter.y) : fromPt;
-    const to = toBox ? borderPoint(toBox, fromCenter.x, fromCenter.y) : toPt;
+  var SIDE_PORTS = [
+    { x: 0.5, y: 0 },
+    { x: 1, y: 0.5 },
+    { x: 0.5, y: 1 },
+    { x: 0, y: 0.5 }
+  ];
+  var RECT_PORTS = [
+    { x: 0.25, y: 0 },
+    { x: 0.5, y: 0 },
+    { x: 0.75, y: 0 },
+    { x: 1, y: 0.25 },
+    { x: 1, y: 0.5 },
+    { x: 1, y: 0.75 },
+    { x: 0.75, y: 1 },
+    { x: 0.5, y: 1 },
+    { x: 0.25, y: 1 },
+    { x: 0, y: 0.75 },
+    { x: 0, y: 0.5 },
+    { x: 0, y: 0.25 }
+  ];
+  var D = 0.5 - Math.SQRT1_2 / 2;
+  var ELLIPSE_PORTS = [
+    { x: 0.5, y: 0 },
+    { x: 1 - D, y: D },
+    { x: 1, y: 0.5 },
+    { x: 1 - D, y: 1 - D },
+    { x: 0.5, y: 1 },
+    { x: D, y: 1 - D },
+    { x: 0, y: 0.5 },
+    { x: D, y: D }
+  ];
+  function portsFor(type) {
+    if (type === "connector") return [];
+    if (type === "rect" || type === "image") return RECT_PORTS;
+    if (type === "ellipse" || type === "circle") return ELLIPSE_PORTS;
+    return SIDE_PORTS;
+  }
+  function portNormal(port) {
+    const d = [
+      [port.y, 0, -1],
+      // top
+      [1 - port.x, 1, 0],
+      // right
+      [1 - port.y, 0, 1],
+      // bottom
+      [port.x, -1, 0]
+      // left
+    ].reduce((best, c) => c[0] < best[0] ? c : best);
+    return { x: d[1], y: d[2] };
+  }
+  function dirOf(v) {
+    if (Math.abs(v.x) >= Math.abs(v.y)) return v.x >= 0 ? "e" : "w";
+    return v.y >= 0 ? "s" : "n";
+  }
+  function routeStraight(fromBox, toBox, fromPt, toPt, fromPort = null, toPort = null) {
+    const fromAim = fromPort || (fromBox ? centerOf(fromBox) : fromPt);
+    const toAim = toPort || (toBox ? centerOf(toBox) : toPt);
+    if (!fromAim || !toAim) return { valid: false };
+    const from = fromPort || (fromBox ? borderPoint(fromBox, toAim.x, toAim.y) : fromPt);
+    const to = toPort || (toBox ? borderPoint(toBox, fromAim.x, fromAim.y) : toPt);
     if (!from || !to) return { valid: false };
     return { x1: from.x, y1: from.y, x2: to.x, y2: to.y, valid: true };
   }
@@ -159,23 +213,57 @@
     if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "e" : "w";
     return dy >= 0 ? "s" : "n";
   }
-  function elbowPoints(a, dirA, b, dirB) {
-    const horizA = dirA === "e" || dirA === "w";
-    const horizB = dirB === "e" || dirB === "w";
-    const pts = [a];
-    if (horizA && horizB) {
-      const midX = (a.x + b.x) / 2;
-      pts.push({ x: midX, y: a.y }, { x: midX, y: b.y });
-    } else if (!horizA && !horizB) {
-      const midY = (a.y + b.y) / 2;
-      pts.push({ x: a.x, y: midY }, { x: b.x, y: midY });
-    } else if (horizA && !horizB) {
-      pts.push({ x: b.x, y: a.y });
-    } else {
-      pts.push({ x: a.x, y: b.y });
+  var STUB = 20;
+  var DIR_VEC = { n: { x: 0, y: -1 }, s: { x: 0, y: 1 }, e: { x: 1, y: 0 }, w: { x: -1, y: 0 } };
+  function step(pt, dir, d) {
+    const v = DIR_VEC[dir];
+    return { x: pt.x + v.x * d, y: pt.y + v.y * d };
+  }
+  function segHitsBox(p, q, box) {
+    const e = 1e-6;
+    return Math.max(p.x, q.x) > box.x + e && Math.min(p.x, q.x) < box.x + box.width - e && Math.max(p.y, q.y) > box.y + e && Math.min(p.y, q.y) < box.y + box.height - e;
+  }
+  function routeCost(pts, boxes) {
+    let hits = 0, reversals = 0, bends = 0, length = 0;
+    let prev = null;
+    for (let i = 1; i < pts.length; i++) {
+      const p = pts[i - 1], q = pts[i];
+      const v = { x: q.x - p.x, y: q.y - p.y };
+      const len = Math.abs(v.x) + Math.abs(v.y);
+      if (len < 1e-6) continue;
+      length += len;
+      for (const box of boxes) if (segHitsBox(p, q, box)) hits++;
+      if (prev) {
+        const dot = prev.x * v.x + prev.y * v.y;
+        if (dot < 0) reversals++;
+        else if (dot === 0) bends++;
+      }
+      prev = v;
     }
-    pts.push(b);
-    return pts;
+    return hits * 1e6 + reversals * 1e5 + bends * 200 + length;
+  }
+  function elbowRoute(a, b) {
+    const a1 = a.box ? step(a.pt, a.dir, STUB) : a.pt;
+    const b1 = b.box ? step(b.pt, b.dir, STUB) : b.pt;
+    const mx = (a1.x + b1.x) / 2, my = (a1.y + b1.y) / 2;
+    const sH = [{ x: mx, y: a1.y }, { x: mx, y: b1.y }];
+    const sV = [{ x: a1.x, y: my }, { x: b1.x, y: my }];
+    const lH = [{ x: b1.x, y: a1.y }];
+    const lV = [{ x: a1.x, y: b1.y }];
+    const horizA = a.dir === "e" || a.dir === "w";
+    const horizB = b.dir === "e" || b.dir === "w";
+    const candidates = horizA && horizB ? [sH, lH, lV, sV] : !horizA && !horizB ? [sV, lV, lH, sH] : horizA ? [lH, lV, sH, sV] : [lV, lH, sV, sH];
+    const boxes = [a.box, b.box].filter(Boolean);
+    let best = null, bestCost = Infinity;
+    for (const mid of candidates) {
+      const pts = [a.pt, a1, ...mid, b1, b.pt];
+      const cost = routeCost(pts, boxes);
+      if (cost < bestCost) {
+        bestCost = cost;
+        best = pts;
+      }
+    }
+    return best;
   }
   function approx(a, b) {
     return Math.abs(a - b) < 1e-6;
@@ -201,19 +289,21 @@
     }
     return out.length >= 2 ? out : dedup;
   }
-  function routeOrthogonal(fromBox, toBox, fromPt, toPt, waypoints) {
-    const fromCenter = fromBox ? centerOf(fromBox) : fromPt;
-    const toCenter = toBox ? centerOf(toBox) : toPt;
+  function routeOrthogonal(fromBox, toBox, fromPt, toPt, waypoints, fromPort = null, toPort = null) {
+    const fromCenter = fromPort || (fromBox ? centerOf(fromBox) : fromPt);
+    const toCenter = toPort || (toBox ? centerOf(toBox) : toPt);
     if (!fromCenter || !toCenter) return { valid: false };
     const wps = Array.isArray(waypoints) ? waypoints.filter((w) => w && isFinite(w.x) && isFinite(w.y)) : [];
     const firstTarget = wps.length ? wps[0] : toCenter;
     const lastTarget = wps.length ? wps[wps.length - 1] : fromCenter;
-    const a = fromBox ? orthExit(fromBox, firstTarget) : { pt: fromPt, dir: dirToward(fromPt, firstTarget) };
-    const b = toBox ? orthExit(toBox, lastTarget) : { pt: toPt, dir: dirToward(toPt, lastTarget) };
+    const a = fromPort ? { pt: { x: fromPort.x, y: fromPort.y }, dir: fromPort.dir } : fromBox ? orthExit(fromBox, firstTarget) : { pt: fromPt, dir: dirToward(fromPt, firstTarget) };
+    const b = toPort ? { pt: { x: toPort.x, y: toPort.y }, dir: toPort.dir } : toBox ? orthExit(toBox, lastTarget) : { pt: toPt, dir: dirToward(toPt, lastTarget) };
+    a.box = fromBox;
+    b.box = toBox;
     if (!a.pt || !b.pt) return { valid: false };
     let raw;
     if (wps.length === 0) {
-      raw = elbowPoints(a.pt, a.dir, b.pt, b.dir).map((p) => ({ ...p, seg: 0 }));
+      raw = elbowRoute(a, b).map((p) => ({ ...p, seg: 0 }));
     } else {
       const anchors = [a.pt, ...wps, b.pt];
       raw = [{ x: anchors[0].x, y: anchors[0].y, seg: 0 }];
@@ -486,6 +576,7 @@
   var chromeHover;
   var chromeSelection;
   var chromeTransient;
+  var chromePorts;
   var canvasSvg;
   var directSelectMode = false;
   function setDirectSelectMode(on) {
@@ -504,9 +595,12 @@
     chromeSelection.setAttribute("id", "chrome-selection");
     chromeTransient = document.createElementNS(SVG_NS2, "g");
     chromeTransient.setAttribute("id", "chrome-transient");
+    chromePorts = document.createElementNS(SVG_NS2, "g");
+    chromePorts.setAttribute("id", "chrome-ports");
     chrome.appendChild(chromeHover);
     chrome.appendChild(chromeSelection);
     chrome.appendChild(chromeTransient);
+    chrome.appendChild(chromePorts);
   }
   function getTransientLayer() {
     return chromeTransient;
@@ -654,7 +748,8 @@
         const el = docLayer.querySelector(`[data-id="${cssEscape(e.ref)}"]`);
         if (!el) return { box: null, pt: null, missing: true };
         const bb = elementBBoxInCanvas(el);
-        return bb ? { box: bb, pt: null } : { box: null, pt: null, missing: true };
+        if (!bb) return { box: null, pt: null, missing: true };
+        return { box: bb, pt: null, port: e.port ? portToCanvas(el, e.port) : null };
       }
       return { box: null, pt: e ? { x: e.x, y: e.y } : null };
     };
@@ -662,9 +757,41 @@
     const b = end(node.to);
     if (a.missing || b.missing) return { valid: false };
     if (node.route === "orthogonal") {
-      return routeOrthogonal(a.box, b.box, a.pt, b.pt, node.waypoints);
+      return routeOrthogonal(a.box, b.box, a.pt, b.pt, node.waypoints, a.port, b.port);
     }
-    return routeStraight(a.box, b.box, a.pt, b.pt);
+    return routeStraight(a.box, b.box, a.pt, b.pt, a.port, b.port);
+  }
+  function portElement(el) {
+    return el.getAttribute("data-wrapper") === "label" && el.firstElementChild ? el.firstElementChild : el;
+  }
+  function portToCanvas(el, port) {
+    const shape = portElement(el);
+    const b = safeBBox(shape);
+    const M = localToCanvasMatrix(shape);
+    if (!M) return null;
+    const pt = canvasSvg.createSVGPoint();
+    pt.x = b.x + port.x * b.width;
+    pt.y = b.y + port.y * b.height;
+    const q = pt.matrixTransform(M);
+    const n = portNormal(port);
+    const dir = dirOf({ x: M.a * n.x + M.c * n.y, y: M.b * n.x + M.d * n.y });
+    return { x: q.x, y: q.y, dir };
+  }
+  function setPortHints(points, active = -1) {
+    clearPortHints();
+    const r3 = 4 * canvasPixelScale();
+    points.forEach((p, i) => {
+      const c = document.createElementNS(SVG_NS2, "circle");
+      c.setAttribute("class", i === active ? "port-hint active" : "port-hint");
+      c.setAttribute("cx", p.x);
+      c.setAttribute("cy", p.y);
+      c.setAttribute("r", i === active ? r3 * 1.5 : r3);
+      chromePorts.appendChild(c);
+    });
+  }
+  function clearPortHints() {
+    if (!chromePorts) return;
+    while (chromePorts.firstChild) chromePorts.removeChild(chromePorts.firstChild);
   }
   function nodeToElement(node) {
     if (node.type === "group") {
@@ -1454,6 +1581,8 @@
   var CANVAS_BBOX = { x: 0, y: 0, width: 1e3, height: 700 };
   var SNAP_THRESHOLD = 6;
   var DRAG_THRESHOLD = 3;
+  var PORT_SNAP_PX = 12;
+  var PORT_REACH_PX = 24;
   var ROUND_RECT_RADIUS = 16;
   var hoveredId = null;
   var SVG_NS4 = "http://www.w3.org/2000/svg";
@@ -1492,7 +1621,10 @@
     svg3.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
     svg3.addEventListener("pointerleave", () => {
-      if (!gesture) setHover(null);
+      if (!gesture) {
+        setHover(null);
+        hideConnectHints();
+      }
     });
     svg3.addEventListener("dblclick", onDoubleClick);
     svg3.addEventListener("contextmenu", onContextMenu);
@@ -1501,8 +1633,10 @@
     if (currentTool === name) return;
     cancelPolyline();
     cancelPen();
+    cancelConnector();
     currentTool = name;
     canvasSvg2.classList.toggle("draw-mode", !isSelectTool(name));
+    canvasSvg2.classList.toggle("connector-mode", name === "connector");
     setDirectSelectMode(name === "directselect");
     setHover(null);
     document.dispatchEvent(new CustomEvent("tool-changed", { detail: name }));
@@ -1517,6 +1651,14 @@
     if (e.button !== 0) return;
     const p = toCanvasPoint(e);
     const target = e.target;
+    if (gesture && gesture.type === "connector" && gesture.armed) {
+      const g = gesture;
+      gesture = null;
+      g.last = p;
+      finishConnector(g, e);
+      clearTransient();
+      return;
+    }
     setHover(null);
     downClient = { x: e.clientX, y: e.clientY };
     const role = target.getAttribute && target.getAttribute("data-role");
@@ -1542,6 +1684,7 @@
     }
     if (!gesture) {
       updateHover(e);
+      if (currentTool === "connector") showConnectHints(connectEndAt(p, e.target, null));
       return;
     }
     const dx = p.x - gesture.origin.x;
@@ -1617,6 +1760,11 @@
     } else if (g.type === "marquee") {
       finishMarquee(g, e.shiftKey);
     } else if (g.type === "connector") {
+      if (g.armed || !g.moved && g.from.ref) {
+        g.armed = true;
+        gesture = g;
+        return;
+      }
       finishConnector(g, e);
     } else if (g.type === "move") {
       if (g.moved && g.ids.length > 0) {
@@ -1983,8 +2131,8 @@
         let ex = p.x, ey = p.y;
         if (e.shiftKey) {
           const ang = Math.atan2(p.y - origin.y, p.x - origin.x);
-          const step = Math.PI / 4;
-          const snapped = Math.round(ang / step) * step;
+          const step2 = Math.PI / 4;
+          const snapped = Math.round(ang / step2) * step2;
           const dist = Math.hypot(p.x - origin.x, p.y - origin.y);
           ex = origin.x + Math.cos(snapped) * dist;
           ey = origin.y + Math.sin(snapped) * dist;
@@ -2023,60 +2171,54 @@
     return false;
   }
   function startConnector(e, p, target) {
-    const hit = hitTest(target);
-    const fromId = hit ? pickSelectionId(hit.id) : null;
+    const at = connectEndAt(p, target, null);
     gesture = {
       type: "connector",
       origin: p,
       last: p,
       moved: false,
-      from: fromId ? { ref: fromId } : { x: p.x, y: p.y },
-      fromAnchor: fromId ? anchorOfShape(fromId) : { x: p.x, y: p.y },
-      toId: null
+      from: at.end || { x: p.x, y: p.y },
+      to: null
     };
-    const line = document.createElementNS(SVG_NS4, "line");
+    showConnectHints(at);
+    const line = document.createElementNS(SVG_NS4, "polyline");
     line.setAttribute("class", "connector-preview");
     gesture.previewEl = line;
     getTransientLayer().appendChild(line);
     updateConnectorPreview(p);
   }
   function updateConnector(p, e) {
-    const hit = hitTest(e.target);
-    let toId = hit ? pickSelectionId(hit.id) : null;
-    if (toId && gesture.from.ref === toId) toId = null;
-    gesture.toId = toId;
-    highlightConnectTarget(toId);
+    const at = connectEndAt(p, e.target, gesture.from.ref ?? null);
+    gesture.to = at.end;
+    highlightConnectTarget(at.end ? at.end.ref : null);
+    showConnectHints(at);
     updateConnectorPreview(p);
   }
   function updateConnectorPreview(p) {
-    const fromBox = gesture.from.ref ? shapeBox(gesture.from.ref) : null;
-    const toBox = gesture.toId ? shapeBox(gesture.toId) : null;
-    const fromPt = gesture.from.ref ? null : { x: gesture.from.x, y: gesture.from.y };
-    const toPt = { x: p.x, y: p.y };
-    const g = routeStraight(fromBox, toBox, fromPt, toPt);
+    const a = endGeometry(gesture.from);
+    const b = gesture.to ? endGeometry(gesture.to) : { box: null, pt: p, port: null };
+    const g = routeOrthogonal(a.box, b.box, a.pt, b.pt, null, a.port, b.port);
     if (!g.valid) return;
-    const line = gesture.previewEl;
-    line.setAttribute("x1", g.x1);
-    line.setAttribute("y1", g.y1);
-    line.setAttribute("x2", g.x2);
-    line.setAttribute("y2", g.y2);
+    gesture.previewEl.setAttribute("points", g.points.map((pt) => pt.join(",")).join(" "));
   }
   function finishConnector(g, e) {
     clearConnectTargetHighlight();
-    const hit = hitTest(e.target);
-    let toId = hit ? pickSelectionId(hit.id) : null;
-    if (toId && g.from.ref === toId) toId = null;
+    hideConnectHints();
+    const toEnd = connectEndAt(g.last, e.target, g.from.ref ?? null).end;
+    if (g.armed && !toEnd) return;
     const dist = Math.hypot(g.last.x - g.origin.x, g.last.y - g.origin.y);
-    const hasAttachment = !!g.from.ref || !!toId;
-    if (!hasAttachment || dist < 4 && !toId) return;
-    const to = toId ? { ref: toId } : { x: round22(g.last.x), y: round22(g.last.y) };
-    const from = g.from.ref ? { ref: g.from.ref } : { x: round22(g.from.x), y: round22(g.from.y) };
+    const hasAttachment = !!g.from.ref || !!toEnd;
+    if (!hasAttachment || dist < 4 && !toEnd) return;
+    const to = toEnd || { x: round22(g.last.x), y: round22(g.last.y) };
+    const from = g.from.ref ? g.from : { x: round22(g.from.x), y: round22(g.from.y) };
     const id = newId("c");
     const node = {
       id,
       type: "connector",
       from,
       to,
+      // New connectors bend at right angles; Routing → Straight in the panel undoes it.
+      route: "orthogonal",
       arrowEnd: true,
       attrs: { ...CONNECTOR_STYLE }
     };
@@ -2087,15 +2229,81 @@
     });
     setSelection([id]);
   }
+  function cancelConnector() {
+    hideConnectHints();
+    if (!gesture || gesture.type !== "connector") return;
+    gesture = null;
+    clearConnectTargetHighlight();
+    clearTransient();
+  }
+  function connectEndAt(p, target, excludeId) {
+    const scale = canvasPixelScale();
+    const hit = hitTest(target);
+    let overId = hit ? pickSelectionId(hit.id) : null;
+    if (overId && (overId === excludeId || !isConnectable(overId))) overId = null;
+    const shapeId = overId || nearestConnectable(p, PORT_REACH_PX * scale, excludeId);
+    if (!shapeId) return { end: null, points: [], active: -1 };
+    const el = getDocLayer().querySelector(`[data-id="${cssEscape2(shapeId)}"]`);
+    const ports = el ? portsFor(findNode(getDoc(), shapeId).type) : [];
+    const points = ports.map((port) => portToCanvas(el, port));
+    let active = -1, bestD = PORT_SNAP_PX * scale;
+    points.forEach((q, i) => {
+      if (!q) return;
+      const d = Math.hypot(q.x - p.x, q.y - p.y);
+      if (d <= bestD) {
+        bestD = d;
+        active = i;
+      }
+    });
+    if (active >= 0) return { end: { ref: shapeId, port: { ...ports[active] } }, points: points.filter(Boolean), active };
+    return { end: overId ? { ref: shapeId } : null, points: points.filter(Boolean), active };
+  }
+  function isConnectable(id) {
+    const n = findNode(getDoc(), id);
+    return !!n && n.type !== "connector";
+  }
+  function nearestConnectable(p, reach, excludeId) {
+    let best = null, bestD = reach;
+    for (const n of getDoc().children) {
+      if (n.type === "connector" || n.id === excludeId) continue;
+      const b = shapeBox(n.id);
+      if (!b) continue;
+      const dx = Math.max(b.x - p.x, 0, p.x - (b.x + b.width));
+      const dy = Math.max(b.y - p.y, 0, p.y - (b.y + b.height));
+      const d = Math.hypot(dx, dy);
+      if (d <= bestD) {
+        bestD = d;
+        best = n.id;
+      }
+    }
+    return best;
+  }
+  function showConnectHints(at) {
+    if (!at.points.length) {
+      hideConnectHints();
+      return;
+    }
+    setPortHints(at.points, at.active);
+    canvasSvg2.classList.toggle("over-port", at.active >= 0);
+  }
+  function hideConnectHints() {
+    clearPortHints();
+    canvasSvg2.classList.remove("over-port");
+  }
+  function endGeometry(end) {
+    if (end.ref == null) return { box: null, pt: { x: end.x, y: end.y }, port: null };
+    const el = getDocLayer().querySelector(`[data-id="${cssEscape2(end.ref)}"]`);
+    return {
+      box: shapeBox(end.ref),
+      pt: null,
+      port: el && end.port ? portToCanvas(el, end.port) : null
+    };
+  }
   function shapeBox(id) {
     const el = getDocLayer().querySelector(`[data-id="${cssEscape2(id)}"]`);
     if (!el) return null;
     const b = elementBBoxInCanvas(el);
     return b ? { x: b.x1, y: b.y1, width: b.x2 - b.x1, height: b.y2 - b.y1 } : null;
-  }
-  function anchorOfShape(id) {
-    const b = shapeBox(id);
-    return b ? { x: b.x + b.width / 2, y: b.y + b.height / 2 } : { x: 0, y: 0 };
   }
   function highlightConnectTarget(id) {
     clearConnectTargetHighlight();
@@ -2855,8 +3063,8 @@
     const delta = (ang - startAngle) * 180 / Math.PI;
     let newRot = originalRot + delta;
     if (e.shiftKey) {
-      const step = e.ctrlKey || e.metaKey ? 1 : 22.5;
-      newRot = Math.round(newRot / step) * step;
+      const step2 = e.ctrlKey || e.metaKey ? 1 : 22.5;
+      newRot = Math.round(newRot / step2) * step2;
     }
     gesture.appliedDeg = newRot - originalRot;
     mutate((root) => {
@@ -3360,9 +3568,9 @@
     const sorted = items.map((it) => ({ ...it, center: it.bbox[axis] + it.bbox[size] / 2 })).sort((a, b) => a.center - b.center);
     const first = sorted[0].center;
     const last = sorted[sorted.length - 1].center;
-    const step = (last - first) / (sorted.length - 1);
+    const step2 = (last - first) / (sorted.length - 1);
     for (let i = 0; i < sorted.length; i++) {
-      const target = first + step * i;
+      const target = first + step2 * i;
       const delta = target - sorted[i].center;
       deltas.set(sorted[i].id, axis === "x" ? { dx: delta, dy: 0 } : { dx: 0, dy: delta });
     }
@@ -4620,9 +4828,9 @@
         return;
       }
       if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
-        const step = e.shiftKey ? 10 : 1;
-        const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
-        const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+        const step2 = e.shiftKey ? 10 : 1;
+        const dx = e.key === "ArrowLeft" ? -step2 : e.key === "ArrowRight" ? step2 : 0;
+        const dy = e.key === "ArrowUp" ? -step2 : e.key === "ArrowDown" ? step2 : 0;
         nudge(dx, dy);
         e.preventDefault();
         return;
